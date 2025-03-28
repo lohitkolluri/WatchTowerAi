@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+*.log
+*.sqlite3
+watchtower.db
+
+# Virtual environment
+.venv/
+env/
+venv/
+ENV/
+/backend/.env
+
+# Secrets & configs
+.env
+*.pem
+*.key
+*.crt
+
+# Logs
+logs/
+*.log
+
+# VS Code
+.vscode/
+
+# PyCharm
+.idea/
+
+# MacOS
+.DS_Store
+
+# Uvicorn reload state (if any)
+*.reload
+
+# Testing output
+coverage/
+htmlcov/
+*.cover
+*.py,cover
+.cache/
+nosetests.xml
+test-results/
+junit-*.xml
+
+# MyPy & Pylint
+.mypy_cache/
+.pytest_cache/
+*.lint
+
+# Jupyter/Notebook extras
+.ipynb_checkpoints/
+
+# Generated fake log scripts / data dumps (optional)
+fake_logs_output.json
+benchmark_results.csv
