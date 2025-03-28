@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WatchTowerAI Alert</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      margin: 0;
+      padding: 0;
+    }
+
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .header {
+      background-color: #f8f9fa;
+      padding: 20px;
+      border-bottom: 3px solid #e74c3c;
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
+    .header h1 {
+      margin: 0;
+      color: #e74c3c;
+    }
+
+    .content {
+      padding: 20px;
+      background-color: #ffffff;
+      border: 1px solid #e9ecef;
+      border-radius: 5px;
+    }
+
+    .alert-info {
+      background-color: #f8f9fa;
+      padding: 15px;
+      border-left: 4px solid #e74c3c;
+      margin-bottom: 20px;
+    }
+
+    .alert-detail {
+      margin-bottom: 10px;
+    }
+
+    .label {
+      font-weight: bold;
+      min-width: 120px;
+      display: inline-block;
+    }
+
+    .remediation {
+      margin-top: 30px;
+      padding: 15px;
+      background-color: #e8f4f8;
+      border-left: 4px solid #3498db;
+    }
+
+    .footer {
+      margin-top: 20px;
+      text-align: center;
+      font-size: 12px;
+      color: #6c757d;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🚨 WatchTowerAI Alert</h1>
+    </div>
+
+    <div class="content">
+      <div class="alert-info">
+        <div class="alert-detail">
+          <span class="label">Service:</span> {{ service_name }}
+        </div>
+        <div class="alert-detail">
+          <span class="label">Environment:</span> {{ environment }}
+        </div>
+        <div class="alert-detail">
+          <span class="label">Level:</span> {{ level }}
+        </div>
+        <div class="alert-detail">
+          <span class="label">Timestamp:</span> {{ timestamp }}
+        </div>
+      </div>
+
+      <h3>Message:</h3>
+      <p>{{ message }}</p>
+
+      <div class="remediation">
+        <h3>AI-Generated Remediation:</h3>
+        <p>{{ remediation }}</p>
+      </div>
+    </div>
+
+    <div class="footer">
+      <p>This is an automated alert from WatchTowerAI.</p>
+      <p>© {{ timestamp.split(' ')[0] }} WatchTowerAI</p>
+    </div>
+  </div>
+</body>
+
+</html>
