@@ -1,19 +1,39 @@
 "use client";
 
-import MainLayout from "@/components/layouts/main-layout";
-import { Plus, Search, ExternalLink, Check, AlertTriangle, X } from "lucide-react";
-import { formatDate } from "@/lib/utils";
+import { TempLayout } from "@/components/layouts/TempLayout";
 import { api } from "@/lib/api";
+import { formatDate } from "@/lib/utils";
+import { AlertTriangle, Check, ExternalLink, Plus, Search, X } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+// Define TypeScript interfaces for better type safety
+interface Endpoint {
+  id: string;
+  name: string;
+  url: string;
+  service?: string;
+  environment?: string;
+  status: string;
+  lastChecked: Date;
+}
+
+interface EndpointBackendData {
+  _id: string;
+  name?: string;
+  url: string;
+  service?: string;
+  status?: string;
+  last_checked?: string | number;
+}
+
 export default function EndpointsPage() {
-  const [endpoints, setEndpoints] = useState([]);
+  const router = useRouter();
+  const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [filters, setFilters] = useState({
-    service: "",
-    environment: ""
-  });
+  const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showRegisterModal, setShowRegisterModal] = useState(false);
 
   useEffect(() => {
     async function fetchEndpoints() {
@@ -22,59 +42,98 @@ export default function EndpointsPage() {
         const endpointsData = await api.endpoints.getAll();
 
         // Transform backend data to match frontend structure
-        const formattedEndpoints = endpointsData.map(endpoint => ({
+        const formattedEndpoints = endpointsData.map((endpoint: EndpointBackendData) => ({
           id: endpoint._id,
-          name: endpoint.name || `${endpoint.service} Endpoint`,
+          name: endpoint.name || `${endpoint.service || 'Example'} API`,
           url: endpoint.url,
-          status: endpoint.status || "healthy",
-          lastChecked: new Date(endpoint.last_checked || Date.now()),
+          status: endpoint.status || "active",
           service: endpoint.service,
-          environment: endpoint.environment || "production",
-          headers: endpoint.headers || { "Content-Type": "application/json" },
-          transformationEnabled: endpoint.transformation_enabled || false
+          environment: endpoint.service ? `${endpoint.service}-env` : undefined,
+          lastChecked: new Date(endpoint.last_checked || Date.now())
         }));
 
-        // Apply filters if any
+        // Apply search filter if any
         let filteredEndpoints = formattedEndpoints;
-        if (filters.service) {
-          filteredEndpoints = filteredEndpoints.filter(e => e.service === filters.service);
-        }
-        if (filters.environment) {
-          filteredEndpoints = filteredEndpoints.filter(e => e.environment === filters.environment);
+        if (searchQuery) {
+          const query = searchQuery.toLowerCase();
+          filteredEndpoints = filteredEndpoints.filter((e: Endpoint) =>
+            e.name.toLowerCase().includes(query) ||
+            e.url.toLowerCase().includes(query)
+          );
         }
 
         setEndpoints(filteredEndpoints);
-      } catch (err) {
+      } catch (err: unknown) {
         console.error("Error fetching endpoints:", err);
-        setError(err.message);
+        setError(err instanceof Error ? err.message : "An unknown error occurred");
       } finally {
         setIsLoading(false);
       }
     }
 
     fetchEndpoints();
-  }, [filters]);
+  }, [searchQuery]);
 
-  // Function to get status icon
-  const getStatusIcon = (status: string) => {
-    switch (status.toLowerCase()) {
-      case "healthy":
-        return <Check className="h-5 w-5 text-green-500" />;
-      case "warning":
-        return <AlertTriangle className="h-5 w-5 text-yellow-500" />;
-      case "error":
-        return <X className="h-5 w-5 text-destructive" />;
-      default:
-        return null;
+  // Function to handle endpoint registration
+  const handleRegisterEndpoint = async (formData: Record<string, any>) => {
+    try {
+      await api.endpoints.add(formData);
+      setShowRegisterModal(false);
+      // Refresh the endpoints list
+      const endpointsData = await api.endpoints.getAll();
+      const formattedEndpoints = endpointsData.map((endpoint: EndpointBackendData) => ({
+        id: endpoint._id,
+        name: endpoint.name || `${endpoint.service || 'Example'} API`,
+        url: endpoint.url,
+        status: endpoint.status || "active",
+        service: endpoint.service,
+        environment: endpoint.service ? `${endpoint.service}-env` : undefined,
+        lastChecked: new Date(endpoint.last_checked || Date.now())
+      }));
+      setEndpoints(formattedEndpoints);
+    } catch (err: unknown) {
+      console.error("Error registering endpoint:", err);
+      setError(err instanceof Error ? err.message : "An unknown error occurred");
     }
   };
 
+  // Function to get status indicator
+  const getStatusIndicator = (status: string) => {
+    const isActive = status.toLowerCase() === "active";
+    return (
+      <div className="flex items-center gap-2">
+        <div className={`h-3 w-3 rounded-full ${isActive ? "bg-green-500" : "bg-red-500"}`}></div>
+        <span className={isActive ? "text-green-500" : "text-red-500"}>
+          {isActive ? "Active" : "Inactive"}
+        </span>
+      </div>
+    );
+  };
+
+  // Function to get status icon based on status
+  const getStatusIcon = (status: string) => {
+    switch (status.toLowerCase()) {
+      case "active":
+        return <Check className="h-4 w-4 text-green-500" />;
+      case "warning":
+        return <AlertTriangle className="h-4 w-4 text-yellow-500" />;
+      case "error":
+        return <X className="h-4 w-4 text-destructive" />;
+      default:
+        return <Check className="h-4 w-4 text-green-500" />;
+    }
+  };
+
+  // If MainLayout is still causing issues, try a simple wrapper as fallback
   return (
-    <MainLayout>
+    <TempLayout>
       <div className="space-y-4">
         <div className="flex justify-between items-center">
           <h1 className="text-3xl font-bold tracking-tight">External Endpoints</h1>
-          <button className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2">
+          <button
+            onClick={() => setShowRegisterModal(true)}
+            className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2"
+          >
             <Plus className="mr-2 h-4 w-4" />
             Add Endpoint
           </button>
@@ -140,61 +199,86 @@ export default function EndpointsPage() {
                     <td colSpan={7} className="p-4 text-center text-muted-foreground">No endpoints found</td>
                   </tr>
                 ) : (
-                  endpoints.map((endpoint) => (
-                  <tr
-                    key={endpoint.id}
-                    className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted"
-                  >
-                    <td className="p-4 align-middle font-medium">{endpoint.name}</td>
-                    <td className="p-4 align-middle">
-                      <div className="flex items-center">
-                        <span className="truncate max-w-[200px]">{endpoint.url}</span>
-                        <a
-                          href={endpoint.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="ml-2 text-muted-foreground hover:text-foreground"
-                        >
-                          <ExternalLink className="h-4 w-4" />
-                        </a>
-                      </div>
-                    </td>
-                    <td className="p-4 align-middle">{endpoint.service}</td>
-                    <td className="p-4 align-middle">{endpoint.environment}</td>
-                    <td className="p-4 align-middle">
-                      <div className="flex items-center gap-2">
-                        {getStatusIcon(endpoint.status)}
-                        <span
-                          className={`capitalize ${endpoint.status === "error" ? "text-destructive" : endpoint.status === "warning" ? "text-yellow-500" : "text-green-500"}`}
-                        >
-                          {endpoint.status}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="p-4 align-middle">{formatDate(endpoint.lastChecked)}</td>
-                    <td className="p-4 align-middle">
-                      <div className="flex items-center gap-2">
-                        <button className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-8 w-8 p-0">
-                          <span className="sr-only">Edit</span>
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="24"
-                            height="24"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            className="h-4 w-4"
+                  endpoints.map((endpoint: Endpoint) => (
+                    <tr
+                      key={endpoint.id}
+                      className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted"
+                    >
+                      <td className="p-4 align-middle font-medium">{endpoint.name}</td>
+                      <td className="p-4 align-middle">
+                        <div className="flex items-center">
+                          <span className="truncate max-w-[200px]">{endpoint.url}</span>
+                          <a
+                            href={endpoint.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="ml-2 text-muted-foreground hover:text-foreground"
                           >
-                            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path>
-                            <path d="m15 5 4 4"></path>
-                          </svg>
-                        </button>
-                        <button className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-8 w-8 p-0">
-                          <span className="sr-only">Test</span>
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="24"
-                            height="24
+                            <ExternalLink className="h-4 w-4" />
+                          </a>
+                        </div>
+                      </td>
+                      <td className="p-4 align-middle">{endpoint.service}</td>
+                      <td className="p-4 align-middle">{endpoint.environment}</td>
+                      <td className="p-4 align-middle">
+                        <div className="flex items-center gap-2">
+                          {getStatusIcon(endpoint.status)}
+                          <span
+                            className={`capitalize ${endpoint.status === "error" ? "text-destructive" : endpoint.status === "warning" ? "text-yellow-500" : "text-green-500"}`}
+                          >
+                            {endpoint.status}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="p-4 align-middle">{formatDate(endpoint.lastChecked)}</td>
+                      <td className="p-4 align-middle">
+                        <div className="flex items-center gap-2">
+                          <button className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-8 w-8 p-0">
+                            <span className="sr-only">Edit</span>
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              width="24"
+                              height="24"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              className="h-4 w-4"
+                            >
+                              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path>
+                              <path d="m15 5 4 4"></path>
+                            </svg>
+                          </button>
+                          <button className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-8 w-8 p-0">
+                            <span className="sr-only">Test</span>
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              width="24"
+                              height="24"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              className="h-4 w-4"
+                            >
+                              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path>
+                              <path d="m15 5 4 4"></path>
+                            </svg>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </TempLayout>
+  );
+}
