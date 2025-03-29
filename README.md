@@ -5,12 +5,14 @@
 ---
 
 ## 🌟 Features
-- Real-time log ingestion via REST API
-- Automated anomaly detection with Google Gemini
-- Email alerts using SMTP with templated emails
-- MongoDB for scalable document storage
-- Professional structured logging for observability
-- Easily extendable and maintainable codebase
+- **Universal API Monitoring** - Monitor any endpoint with any data structure automatically
+- **AI-powered Classification** - Intelligent log categorization and entity extraction
+- **Advanced Search** - Find logs by type, entities, confidence scores, and more
+- **Real-time Anomaly Detection** - With Google Gemini AI integration
+- **Smart Alerting** - Automated alert generation with remediation suggestions
+- **Email Notifications** - For critical issues using templated emails
+- **Flexible Data Storage** - MongoDB for scalable and schema-flexible storage
+- **Comprehensive API** - Endpoints for logs, alerts, metrics, and monitoring
 
 ---
 
@@ -40,6 +42,7 @@ WatchTowerAI/
 │       ├── gemini.py       # Gemini AI integration
 │       ├── email_alert.py  # Email notifications (SMTP)
 │       ├── log_processor.py # Log processing logic
+│       ├── log_classifier.py # AI log classification
 │       └── metrics.py      # Metrics tracking
 ├── email_templates/        # Jinja2 email templates
 ├── .env                    # Environment variables
@@ -98,34 +101,73 @@ Access the interactive API docs (Swagger UI) at:
 
 http://localhost:8000/docs
 
+### Key Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /ingest` | Ingest structured log entries |
+| `GET /logs` | Retrieve and filter logs |
+| `GET /logs/search` | Advanced search with classification filters |
+| `GET /alerts` | Retrieve and filter alerts |
+| `PATCH /alerts/{alert_id}` | Acknowledge alerts |
+| `GET /metrics` | Get service performance metrics |
+| `POST /monitor/api` | Register external API endpoints for monitoring |
+| `GET /monitor/api` | View API monitoring results |
+| `/{path:path}` | Universal monitoring endpoint (captures any request) |
+
 ---
 
-## 🧪 Testing and Benchmarking
+## 🔍 Intelligent Log Classification
 
-Generate fake logs to test backend functionality:
-```bash
-python generate_fake_logs.py --logs 100 --threads 5
-```
+WatchTowerAI automatically classifies logs with:
+
+- **Primary log type**: database, auth, request, performance, security, infrastructure
+- **Subtype**: connection errors, login failures, query issues, etc.
+- **Entity extraction**: IP addresses, emails, user IDs, request IDs, timestamps, URLs
+- **Confidence scoring**: How certain the classification is
+- **Auto-generated tags**: Based on content, severity, and classification
+
+This classification powers advanced search capabilities and better insights.
+
+---
+
+## 🌐 Universal Endpoint Monitoring
+
+The system can monitor any API endpoint by:
+
+1. Capturing requests to undefined paths with `/{path:path}`
+2. Supporting all HTTP methods and content types
+3. Extracting and storing full request details (headers, body, query params)
+4. Automatically classifying and processing the captured requests
+5. Generating alerts for unexpected behavior
+
+Simply direct traffic to any undefined path on your WatchTowerAI server with a `service_name` query parameter.
 
 ---
 
 ## 📝 Logs & Monitoring
 
-All application logs are stored in `logs/watchtower.log`.
+All application logs are stored in both:
+- `logs/watchtower.log` (local logging)
+- MongoDB collections (for data analysis)
 
 ---
 
 ## 📮 Alert Emails
 
-Emails are sent using HTML templates (`email_templates/*.html`).
+Emails are sent using HTML templates (`email_templates/*.html`) and include:
+- Service information
+- Alert details
+- AI-generated remediation suggestions
 
 ---
 
 ## 💡 Future Improvements
-- Implement Celery/RQ for robust background task handling
-- Transition to PostgreSQL for enhanced scalability
-- Add structured logging for better analytics
-- Dockerize for simplified deployment and scalability
+- Machine learning-based classification enhancements
+- Real-time dashboard with metrics visualization
+- Webhook integrations for alerts (Slack, Discord, etc.)
+- Enhanced anomaly detection with historical pattern analysis
+- Dockerized deployment with Kubernetes support
 
 ---
 

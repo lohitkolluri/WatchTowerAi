@@ -1,70 +1,108 @@
 from datetime import datetime
-from typing import Optional, Dict, Any
-from pydantic import BaseModel, Field
+from typing import Any
+from pydantic import BaseModel, Field, GetCoreSchemaHandler
+from pydantic_core import core_schema
+from bson import ObjectId
+
+class PyObjectId(str):
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls,
+        _source_type: Any,
+        _handler: GetCoreSchemaHandler
+    ) -> core_schema.CoreSchema:
+        return core_schema.union_schema(
+            [
+                core_schema.is_instance_schema(ObjectId),
+                core_schema.chain_schema([
+                    core_schema.str_schema(),
+                    core_schema.no_info_plain_validator_function(cls.validate),
+                ]),
+            ],
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                lambda x: str(x) if isinstance(x, ObjectId) else x
+            ),
+        )
+
+    @classmethod
+    def validate(cls, value):
+        if isinstance(value, ObjectId):
+            return value
+        if isinstance(value, str):
+            # Don't try to convert empty strings to ObjectId
+            if not value:
+                raise ValueError("Empty string is not a valid ObjectId")
+            try:
+                return ObjectId(value)
+            except ValueError:
+                pass
+        raise ValueError(f"'{value}' is not a valid ObjectId")
 
 class LogEntryCreate(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     service_name: str
-    environment: str
-    level: str  # e.g., INFO, WARN, ERROR
+    environment: str = "production"
+    level: str = "INFO"
     message: str
-    error_code: Optional[str] = None
-    correlation_id: Optional[str] = None
+    error_code: str | None = None
+    correlation_id: str | None = None
+    additional_data: dict | None = None
 
-# Updated response models to work with MongoDB documents directly
 class LogEntryRead(BaseModel):
-    id: str = Field(alias="_id")
+    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
     timestamp: datetime
     service_name: str
     environment: str
     level: str
     message: str
-    error_code: Optional[str] = None
-    correlation_id: Optional[str] = None
+    error_code: str | None = None
+    correlation_id: str | None = None
+    raw_payload: dict | None = None
 
-    # Fix for MongoDB document serialization
+    # Classification fields
+    log_type: str | None = None
+    log_subtype: str | None = None
+    confidence_score: float | None = None
+    entities: dict | None = None
+    tags: list[str] | None = None
+
     model_config = {
         "populate_by_name": True,
-        "arbitrary_types_allowed": True,
-        "json_encoders": {
-            datetime: lambda dt: dt.isoformat(),
-        }
+        "json_encoders": {ObjectId: str},
+        "arbitrary_types_allowed": True
     }
 
 class AlertRead(BaseModel):
-    id: str = Field(alias="_id")
+    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
+    timestamp: datetime
     service_name: str
     environment: str
     level: str
     message: str
-    correlation_id: Optional[str] = None
-    remediation: Optional[str] = None
-    timestamp: datetime
-    acknowledged: bool
+    acknowledged: bool = False
+    log_type: str | None = None
+    log_subtype: str | None = None
+    remediation: str | None = None
 
     model_config = {
         "populate_by_name": True,
-        "arbitrary_types_allowed": True,
-        "json_encoders": {
-            datetime: lambda dt: dt.isoformat(),
-        }
+        "json_encoders": {ObjectId: str},
+        "arbitrary_types_allowed": True
     }
 
 class AlertUpdate(BaseModel):
     acknowledged: bool
 
 class MetricRead(BaseModel):
-    id: str = Field(alias="_id")
+    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
     service_name: str
     environment: str
     total: int
     errors: int
-    updated_at: datetime
+    updated_at: datetime = Field(alias="last_updated")
 
     model_config = {
         "populate_by_name": True,
-        "arbitrary_types_allowed": True,
-        "json_encoders": {
-            datetime: lambda dt: dt.isoformat(),
-        }
+        "json_encoders": {ObjectId: str},
+        "arbitrary_types_allowed": True
     }

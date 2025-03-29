@@ -11,7 +11,7 @@ from ..config import settings
 logger = logging.getLogger(__name__)
 
 # Set up Jinja2 environment
-templates_dir = Path(__file__).parents[3] / "email_templates"
+templates_dir = Path(__file__).parents[3] / "backend/email_templates"
 os.makedirs(templates_dir, exist_ok=True)
 env = Environment(loader=FileSystemLoader(templates_dir))
 

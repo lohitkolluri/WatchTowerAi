@@ -8,6 +8,7 @@ __pycache__/
 *.log
 *.sqlite3
 watchtower.db
+test_watchtowerai_extended.py
 
 # Virtual environment
 .venv/

@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     MONGODB_URI: str = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
     MONGODB_DB_NAME: str = os.getenv("MONGODB_DB_NAME", "watchtower")
 
+    # Add fallback mode option for development/testing
+    ENABLE_FALLBACK_MODE: bool = os.getenv("ENABLE_FALLBACK_MODE", "false").lower() == "true"
+
     # Gemini API
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 

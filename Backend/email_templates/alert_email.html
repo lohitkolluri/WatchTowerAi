@@ -64,11 +64,55 @@
       border-left: 4px solid #3498db;
     }
 
+    .markdown-content strong,
+    .markdown-content b {
+      font-weight: 600;
+      color: #2c3e50;
+    }
+
+    .markdown-content ol {
+      padding-left: 20px;
+      margin: 12px 0;
+    }
+
+    .markdown-content ol li {
+      margin-bottom: 10px;
+      padding-left: 5px;
+    }
+
+    .markdown-content code {
+      background-color: #f5f5f5;
+      padding: 2px 4px;
+      border-radius: 3px;
+      font-family: monospace;
+      font-size: 0.9em;
+      color: #e74c3c;
+      border: 1px solid #ddd;
+    }
+
+    .markdown-content h4 {
+      margin-top: 16px;
+      margin-bottom: 8px;
+      color: #2c3e50;
+    }
+
+    .markdown-content p {
+      margin-bottom: 12px;
+    }
+
     .footer {
       margin-top: 20px;
+      background-color: #f8f9fa;
+      padding: 15px;
       text-align: center;
       font-size: 12px;
       color: #6c757d;
+      border-top: 1px solid #eee;
+    }
+
+    .footer p {
+      margin: 5px 0;
+      text-align: center;
     }
   </style>
 </head>
@@ -100,13 +144,35 @@
 
       <div class="remediation">
         <h3>AI-Generated Remediation:</h3>
-        <p>{{ remediation }}</p>
+        <div class="markdown-content">
+          {% set formatted_remediation = remediation | replace("**", "<strong>") | replace("**", "</strong>") %}
+          {% set formatted_remediation = formatted_remediation | replace("1. ", "<ol>
+            <li>") | replace("2. ", "</li>
+            <li>") | replace("3. ", "</li>
+            <li>") | replace("4. ", "</li>
+            <li>") %}
+              {% if "4. " in remediation %}
+              {% set formatted_remediation = formatted_remediation + "</li>
+          </ol>" %}
+          {% elif "3. " in remediation %}
+          {% set formatted_remediation = formatted_remediation + "</li>
+          </ol>" %}
+          {% elif "2. " in remediation %}
+          {% set formatted_remediation = formatted_remediation + "</li>
+          </ol>" %}
+          {% elif "1. " in remediation %}
+          {% set formatted_remediation = formatted_remediation + "</li>
+          </ol>" %}
+          {% endif %}
+          {% set formatted_remediation = formatted_remediation | replace("`", "<code>") | replace("`", "</code>") %}
+          {{ formatted_remediation | safe }}
+        </div>
       </div>
     </div>
 
     <div class="footer">
       <p>This is an automated alert from WatchTowerAI.</p>
-      <p>© {{ timestamp.split(' ')[0] }} WatchTowerAI</p>
+      <p>© {{ timestamp.split(' ')[0].split('-')[0] }} WatchTowerAI</p>
     </div>
   </div>
 </body>
