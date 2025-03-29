@@ -1,3 +1,17 @@
+/Frontend/node_modules
+/Frontend/.next
+/Frontend/.cache
+/Frontend/.pytest_cache
+/Frontend/.mypy_cache
+/Frontend/.vscode
+/Frontend/.idea
+/Frontend/.DS_Store
+/Frontend/.pytest_cache
+/Frontend/.pytest_cache
+/Frontend/.mypy_cache
+/Frontend/.vscode
+/Frontend/.idea
+/Frontend/.DS_Store
 # Python
 __pycache__/
 *.py[cod]
@@ -15,7 +29,7 @@ test_watchtowerai_extended.py
 env/
 venv/
 ENV/
-/backend/.env
+/Backend/.env
 
 # Secrets & configs
 .env
