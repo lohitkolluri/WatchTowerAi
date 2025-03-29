@@ -2,8 +2,9 @@ import asyncio
 import logging
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
-from pymongo import IndexModel, ASCENDING
+from pymongo import IndexModel, ASCENDING, DESCENDING
 from .config import settings
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,8 @@ class MongoDB:
     alerts = None
     metrics = None
     api_monitors = None
+    api_endpoints = None
+    endpoint_pings = None
 
 async def connect_to_mongo():
     """Establish connection to MongoDB"""
@@ -60,6 +63,8 @@ async def connect_to_mongo():
         MongoDB.alerts = MongoDB.db.alerts
         MongoDB.metrics = MongoDB.db.metrics
         MongoDB.api_monitors = MongoDB.db.api_monitors
+        MongoDB.api_endpoints = MongoDB.db.api_endpoints
+        MongoDB.endpoint_pings = MongoDB.db.endpoint_pings
 
         # Create indexes
         await create_indexes()
@@ -92,7 +97,7 @@ async def create_indexes():
     """Create indexes for MongoDB collections"""
     # Indexes for log_entries collection
     log_indexes = [
-        IndexModel([("timestamp", ASCENDING)]),
+        IndexModel([("timestamp", DESCENDING)]),
         IndexModel([("service_name", ASCENDING)]),
         IndexModel([("environment", ASCENDING)]),
         IndexModel([("level", ASCENDING)])
@@ -101,8 +106,8 @@ async def create_indexes():
 
     # Indexes for alerts collection
     alert_indexes = [
+        IndexModel([("timestamp", DESCENDING)]),
         IndexModel([("service_name", ASCENDING)]),
-        IndexModel([("environment", ASCENDING)]),
         IndexModel([("acknowledged", ASCENDING)])
     ]
     await MongoDB.alerts.create_indexes(alert_indexes)
@@ -116,11 +121,27 @@ async def create_indexes():
 
     # Indexes for api_monitors collection
     api_monitor_indexes = [
+        IndexModel([("timestamp", DESCENDING)]),
         IndexModel([("service_name", ASCENDING)]),
-        IndexModel([("environment", ASCENDING)]),
         IndexModel([("acknowledged", ASCENDING)])
     ]
     await MongoDB.api_monitors.create_indexes(api_monitor_indexes)
+
+    # Indexes for api_endpoints collection
+    api_endpoint_indexes = [
+        IndexModel([("created_at", DESCENDING)]),
+        IndexModel([("service", ASCENDING)]),
+        IndexModel([("status", ASCENDING)])
+    ]
+    await MongoDB.api_endpoints.create_indexes(api_endpoint_indexes)
+
+    # Indexes for endpoint_pings collection
+    endpoint_ping_indexes = [
+        IndexModel([("timestamp", DESCENDING)]),
+        IndexModel([("endpoint_id", ASCENDING)]),
+        IndexModel([("success", ASCENDING)])
+    ]
+    await MongoDB.endpoint_pings.create_indexes(endpoint_ping_indexes)
 
     logger.info("✅ Created MongoDB indexes")
 

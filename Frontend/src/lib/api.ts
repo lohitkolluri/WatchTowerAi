@@ -1,3 +1,5 @@
+import { endpointService } from '@/services/endpointService';
+
 // API service for WatchTowerAI
 
 const API_BASE_URL = 'http://127.0.0.1:8000';
@@ -67,20 +69,11 @@ export const api = {
 
   // Endpoints monitoring
   endpoints: {
-    getAll: async () => {
-      const response = await fetch(`${API_BASE_URL}/monitor/api`);
-      return handleResponse(response);
-    },
-    add: async (endpointData: any) => {
-      const response = await fetch(`${API_BASE_URL}/monitor/api`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(endpointData),
-      });
-      return handleResponse(response);
-    },
+    getAll: endpointService.getAllEndpoints,
+    getById: endpointService.getEndpointById,
+    add: endpointService.createEndpoint,
+    update: endpointService.updateEndpoint,
+    delete: endpointService.deleteEndpoint,
   },
 
   // Health check

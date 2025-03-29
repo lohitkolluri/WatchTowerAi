@@ -1581,6 +1581,601 @@ async def search_logs(
         logger.error(f"Error searching logs: {str(e)}")
         raise HTTPException(status_code=500, detail="Error searching logs")
 
+# API Key validation dependency
+async def get_api_key(api_key: str = Security(api_key_header)):
+    # For demo purposes in Swagger UI, we'll accept any API key
+    # In production, you would validate against a database
+    if api_key:
+        return api_key
+    # No API key provided, this would normally raise an error in production
+    return None
+
+@app.post("/token", tags=["system"], include_in_schema=True)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    """
+    Get an OAuth2 access token for use with authenticated endpoints.
+
+    This is a demo endpoint that simulates OAuth2 authentication.
+    In a production environment, this would validate credentials against a database
+    and use proper token generation and validation.
+
+    For demo purposes:
+    - Username can be any value
+    - Password should be "watchtower" to get a token
+    """
+    # In a real app, you would verify the username and password
+    # For demo purposes, accept any username with password "watchtower"
+    if form_data.password != "watchtower":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # In a real app, you would create a proper JWT token
+    # For demo, just return a mock token
+    return {
+        "access_token": "demo_token_" + form_data.username,
+        "token_type": "bearer",
+        "expires_in": 3600,
+        "scope": " ".join(form_data.scopes) if form_data.scopes else "read write"
+    }
+
+# Add a new endpoint to fix existing alerts with missing IDs
+@app.post(
+    "/admin/fix-alerts",
+    response_model=dict,
+    tags=["system"],
+    summary="Fix alerts with missing or invalid IDs",
+    description="Administrative endpoint to repair alerts that have missing or invalid IDs in the database.",
+)
+async def fix_alerts(
+    api_key: str = Security(api_key_header)
+):
+    if not api_key:
+        raise HTTPException(status_code=401, detail="API key required")
+
+    try:
+        # Find alerts with missing _id fields
+        async def find_and_fix_alerts():
+            # Find alerts without _id field or with null _id
+            cursor = MongoDB.alerts.find({"$or": [{"_id": {"$exists": False}}, {"_id": None}]})
+            invalid_alerts = await cursor.to_list(length=1000)
+            fixed_count = 0
+
+            # Fix each invalid alert
+            for alert in invalid_alerts:
+                # Generate a new ObjectId
+                new_id = ObjectId()
+
+                # Remove the alert without an ID
+                await MongoDB.alerts.delete_one({"_id": alert.get("_id")})
+
+                # Insert a new one with a valid ID
+                alert["_id"] = new_id
+                await MongoDB.alerts.insert_one(alert)
+                fixed_count += 1
+
+            return {"fixed_count": fixed_count}
+
+        result = await perform_db_operation(find_and_fix_alerts)
+        return {
+            "status": "success",
+            "message": f"Fixed {result['fixed_count']} alerts with invalid IDs",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error fixing alerts: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fixing alerts: {str(e)}")
+
+@app.get(
+    "/api/endpoints",
+    response_model=list[dict],
+    tags=["monitoring"],
+    summary="List all registered API endpoints",
+    description="Get a list of all API endpoints registered for monitoring.",
+    responses={
+        200: {
+            "description": "Endpoints retrieved successfully",
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "_id": "60a6b3c2d4e5f6a7b8c9d0e1",
+                            "name": "User Service API",
+                            "url": "https://api.example.com/v1/users",
+                            "method": "GET",
+                            "service": "user-service",
+                            "description": "User management API endpoint",
+                            "status": "active",
+                            "created_at": "2023-08-21T15:45:22.123Z",
+                            "last_checked": "2023-08-21T15:45:22.123Z"
+                        }
+                    ]
+                }
+            }
+        }
+    }
+)
+async def get_endpoints():
+    """Get all registered API endpoints for monitoring."""
+    logger.info("📋 Retrieving registered endpoints")
+
+    async def fetch_endpoints():
+        cursor = MongoDB.api_endpoints.find()
+        endpoints = await cursor.to_list(length=100)
+
+        # Format the endpoints
+        formatted_endpoints = []
+        for endpoint in endpoints:
+            endpoint["_id"] = str(endpoint["_id"])
+            formatted_endpoints.append(endpoint)
+
+        return formatted_endpoints
+
+    try:
+        endpoints = await perform_db_operation(fetch_endpoints)
+        logger.info(f"✅ Retrieved {len(endpoints)} endpoints")
+        return endpoints
+    except Exception as e:
+        logger.error(f"Error fetching endpoints: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error retrieving endpoints")
+
+@app.post(
+    "/api/endpoints",
+    response_model=dict,
+    status_code=status.HTTP_201_CREATED,
+    tags=["monitoring"],
+    summary="Register a new API endpoint",
+    description="Register a new API endpoint for monitoring.",
+    responses={
+        201: {
+            "description": "Endpoint registered successfully",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "_id": "60a6b3c2d4e5f6a7b8c9d0e1",
+                        "name": "User Service API",
+                        "url": "https://api.example.com/v1/users",
+                        "method": "GET",
+                        "service": "user-service",
+                        "description": "User management API endpoint",
+                        "status": "active",
+                        "created_at": "2023-08-21T15:45:22.123Z"
+                    }
+                }
+            }
+        }
+    }
+)
+async def create_endpoint(
+    name: str = Body(..., description="Name of the endpoint"),
+    url: str = Body(..., description="URL of the endpoint"),
+    method: str = Body("GET", description="HTTP method (GET, POST, etc.)"),
+    service: str = Body(None, description="Service this endpoint belongs to"),
+    description: str = Body(None, description="Description of what this endpoint does")
+):
+    """Register a new API endpoint for monitoring."""
+    logger.info(f"➕ Registering new endpoint: {name} - {url}")
+
+    timestamp = datetime.utcnow()
+
+    # Create the endpoint document
+    endpoint = {
+        "name": name,
+        "url": url,
+        "method": method,
+        "service": service,
+        "description": description,
+        "status": "active",
+        "created_at": timestamp,
+        "last_checked": timestamp
+    }
+
+    async def create_endpoint_op():
+        result = await MongoDB.api_endpoints.insert_one(endpoint)
+        if not result.inserted_id:
+            raise HTTPException(status_code=500, detail="Failed to register endpoint")
+
+        # Return the newly created endpoint
+        endpoint["_id"] = str(result.inserted_id)
+        return endpoint
+
+    try:
+        new_endpoint = await perform_db_operation(create_endpoint_op)
+        logger.info(f"✅ Endpoint registered: {name}")
+        return new_endpoint
+    except Exception as e:
+        logger.error(f"Error registering endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error registering endpoint: {str(e)}")
+
+@app.get(
+    "/api/endpoints/{endpoint_id}",
+    response_model=dict,
+    tags=["monitoring"],
+    summary="Get a specific API endpoint",
+    description="Get details of a specific registered API endpoint.",
+    responses={
+        200: {
+            "description": "Endpoint retrieved successfully",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "_id": "60a6b3c2d4e5f6a7b8c9d0e1",
+                        "name": "User Service API",
+                        "url": "https://api.example.com/v1/users",
+                        "method": "GET",
+                        "service": "user-service",
+                        "description": "User management API endpoint",
+                        "status": "active",
+                        "created_at": "2023-08-21T15:45:22.123Z",
+                        "last_checked": "2023-08-21T15:45:22.123Z"
+                    }
+                }
+            }
+        },
+        404: {
+            "description": "Endpoint not found",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Endpoint not found"
+                    }
+                }
+            }
+        }
+    }
+)
+async def get_endpoint(endpoint_id: str):
+    """Get a specific registered API endpoint."""
+    logger.info(f"🔍 Retrieving endpoint: {endpoint_id}")
+
+    try:
+        object_id = ObjectId(endpoint_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid endpoint ID format")
+
+    async def fetch_endpoint():
+        endpoint = await MongoDB.api_endpoints.find_one({"_id": object_id})
+        if not endpoint:
+            raise HTTPException(status_code=404, detail="Endpoint not found")
+
+        endpoint["_id"] = str(endpoint["_id"])
+        return endpoint
+
+    try:
+        endpoint = await perform_db_operation(fetch_endpoint)
+        return endpoint
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving endpoint: {str(e)}")
+
+@app.put(
+    "/api/endpoints/{endpoint_id}",
+    response_model=dict,
+    tags=["monitoring"],
+    summary="Update an API endpoint",
+    description="Update the details of a registered API endpoint.",
+    responses={
+        200: {
+            "description": "Endpoint updated successfully",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "_id": "60a6b3c2d4e5f6a7b8c9d0e1",
+                        "name": "Updated Service API",
+                        "url": "https://api.example.com/v2/users",
+                        "method": "GET",
+                        "service": "user-service",
+                        "description": "Updated user management API endpoint",
+                        "status": "active",
+                        "created_at": "2023-08-21T15:45:22.123Z",
+                        "updated_at": "2023-08-21T16:30:45.678Z"
+                    }
+                }
+            }
+        },
+        404: {
+            "description": "Endpoint not found",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Endpoint not found"
+                    }
+                }
+            }
+        }
+    }
+)
+async def update_endpoint(
+    endpoint_id: str,
+    name: str = Body(None, description="Name of the endpoint"),
+    url: str = Body(None, description="URL of the endpoint"),
+    method: str = Body(None, description="HTTP method (GET, POST, etc.)"),
+    service: str = Body(None, description="Service this endpoint belongs to"),
+    description: str = Body(None, description="Description of what this endpoint does"),
+    status: str = Body(None, description="Status of the endpoint (active, inactive)")
+):
+    """Update a registered API endpoint."""
+    logger.info(f"✏️ Updating endpoint: {endpoint_id}")
+
+    try:
+        object_id = ObjectId(endpoint_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid endpoint ID format")
+
+    # Build update document
+    update_data = {}
+    if name is not None:
+        update_data["name"] = name
+    if url is not None:
+        update_data["url"] = url
+    if method is not None:
+        update_data["method"] = method
+    if service is not None:
+        update_data["service"] = service
+    if description is not None:
+        update_data["description"] = description
+    if status is not None:
+        update_data["status"] = status
+
+    # Add timestamp
+    update_data["updated_at"] = datetime.utcnow()
+
+    async def update_endpoint_op():
+        result = await MongoDB.api_endpoints.update_one(
+            {"_id": object_id},
+            {"$set": update_data}
+        )
+
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="Endpoint not found")
+
+        # Return the updated endpoint
+        updated_endpoint = await MongoDB.api_endpoints.find_one({"_id": object_id})
+        updated_endpoint["_id"] = str(updated_endpoint["_id"])
+        return updated_endpoint
+
+    try:
+        updated = await perform_db_operation(update_endpoint_op)
+        logger.info(f"✅ Endpoint updated: {endpoint_id}")
+        return updated
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error updating endpoint: {str(e)}")
+
+@app.delete(
+    "/api/endpoints/{endpoint_id}",
+    response_model=dict,
+    tags=["monitoring"],
+    summary="Delete an API endpoint",
+    description="Remove a registered API endpoint from monitoring.",
+    responses={
+        200: {
+            "description": "Endpoint deleted successfully",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "Endpoint deleted successfully",
+                        "id": "60a6b3c2d4e5f6a7b8c9d0e1"
+                    }
+                }
+            }
+        },
+        404: {
+            "description": "Endpoint not found",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Endpoint not found"
+                    }
+                }
+            }
+        }
+    }
+)
+async def delete_endpoint(endpoint_id: str):
+    """Delete a registered API endpoint."""
+    logger.info(f"🗑️ Deleting endpoint: {endpoint_id}")
+
+    try:
+        object_id = ObjectId(endpoint_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid endpoint ID format")
+
+    async def delete_endpoint_op():
+        result = await MongoDB.api_endpoints.delete_one({"_id": object_id})
+
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="Endpoint not found")
+
+        return {"message": "Endpoint deleted successfully", "id": endpoint_id}
+
+    try:
+        result = await perform_db_operation(delete_endpoint_op)
+        logger.info(f"✅ Endpoint deleted: {endpoint_id}")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error deleting endpoint: {str(e)}")
+
+@app.post(
+    "/api/endpoints/{endpoint_id}/ping",
+    response_model=dict,
+    tags=["monitoring"],
+    summary="Ping an API endpoint",
+    description="Send a request to a monitored API endpoint and record the result.",
+    responses={
+        200: {
+            "description": "Endpoint pinged successfully",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "Endpoint pinged successfully",
+                        "id": "60a6b3c2d4e5f6a7b8c9d0e1",
+                        "status_code": 200,
+                        "response_time_ms": 123.45
+                    }
+                }
+            }
+        },
+        404: {
+            "description": "Endpoint not found",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Endpoint not found"
+                    }
+                }
+            }
+        }
+    }
+)
+async def ping_endpoint(
+    endpoint_id: str,
+    background_tasks: BackgroundTasks
+):
+    """Ping a registered API endpoint and record the result."""
+    logger.info(f"🔔 Pinging endpoint: {endpoint_id}")
+
+    try:
+        object_id = ObjectId(endpoint_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid endpoint ID format")
+
+    async def get_endpoint_data():
+        endpoint = await MongoDB.api_endpoints.find_one({"_id": object_id})
+        if not endpoint:
+            raise HTTPException(status_code=404, detail="Endpoint not found")
+        return endpoint
+
+    try:
+        endpoint = await perform_db_operation(get_endpoint_data)
+
+        # Update last checked timestamp
+        await MongoDB.api_endpoints.update_one(
+            {"_id": object_id},
+            {"$set": {"last_checked": datetime.utcnow()}}
+        )
+
+        # Ping the endpoint in the background
+        background_tasks.add_task(
+            perform_endpoint_ping,
+            endpoint_id,
+            endpoint["url"],
+            endpoint.get("method", "GET"),
+            endpoint.get("service")
+        )
+
+        return {
+            "message": "Endpoint ping initiated",
+            "id": str(endpoint["_id"]),
+            "url": endpoint["url"]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error pinging endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error pinging endpoint: {str(e)}")
+
+async def perform_endpoint_ping(endpoint_id, url, method="GET", service=None):
+    """Perform the actual HTTP request to an endpoint and record the results."""
+    import httpx
+    import time
+
+    start_time = time.time()
+    status_code = None
+    error_message = None
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            if method.upper() == "GET":
+                response = await client.get(url)
+            elif method.upper() == "POST":
+                response = await client.post(url)
+            elif method.upper() == "PUT":
+                response = await client.put(url)
+            elif method.upper() == "DELETE":
+                response = await client.delete(url)
+            else:
+                response = await client.request(method, url)
+
+            response_time = time.time() - start_time
+            status_code = response.status_code
+
+            try:
+                response_data = response.json()
+            except:
+                response_data = {"text": response.text[:1000]}
+
+            # Record the ping result
+            ping_result = {
+                "endpoint_id": endpoint_id,
+                "url": url,
+                "method": method,
+                "service": service,
+                "timestamp": datetime.utcnow(),
+                "response_time_ms": round(response_time * 1000, 2),
+                "status_code": status_code,
+                "response_data": response_data,
+                "success": status_code < 400,
+                "error": None
+            }
+
+            await MongoDB.endpoint_pings.insert_one(ping_result)
+
+            # Update endpoint status based on ping result
+            status = "active" if status_code < 400 else "error"
+            await MongoDB.api_endpoints.update_one(
+                {"_id": ObjectId(endpoint_id)},
+                {"$set": {
+                    "status": status,
+                    "last_status_code": status_code,
+                    "last_response_time_ms": round(response_time * 1000, 2),
+                    "last_checked": datetime.utcnow()
+                }}
+            )
+
+            logger.info(f"✅ Endpoint {endpoint_id} pinged successfully: {status_code} in {round(response_time * 1000, 2)}ms")
+
+    except Exception as e:
+        error_message = str(e)
+        logger.error(f"❌ Error pinging endpoint {endpoint_id}: {error_message}")
+
+        # Record the failed ping
+        ping_result = {
+            "endpoint_id": endpoint_id,
+            "url": url,
+            "method": method,
+            "service": service,
+            "timestamp": datetime.utcnow(),
+            "response_time_ms": round((time.time() - start_time) * 1000, 2),
+            "status_code": None,
+            "response_data": None,
+            "success": False,
+            "error": error_message
+        }
+
+        await MongoDB.endpoint_pings.insert_one(ping_result)
+
+        # Update endpoint status to error
+        await MongoDB.api_endpoints.update_one(
+            {"_id": ObjectId(endpoint_id)},
+            {"$set": {
+                "status": "error",
+                "last_error": error_message,
+                "last_checked": datetime.utcnow()
+            }}
+        )
+
+# This should be the last route defined - it captures all undefined routes
 @app.api_route(
     "/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
@@ -1750,7 +2345,7 @@ async def catch_all(
         inserted_doc = await perform_db_operation(insert_log)
 
         if inserted_doc:
-            # Process the log in background to classify it
+            # Process the log in background
             background_tasks.add_task(process_log, new_log)
             logger.info(f"✅ Captured and stored request to {path}")
 
@@ -1775,91 +2370,3 @@ async def catch_all(
             },
             status_code=500
         )
-
-# API Key validation dependency
-async def get_api_key(api_key: str = Security(api_key_header)):
-    # For demo purposes in Swagger UI, we'll accept any API key
-    # In production, you would validate against a database
-    if api_key:
-        return api_key
-    # No API key provided, this would normally raise an error in production
-    return None
-
-@app.post("/token", tags=["system"], include_in_schema=True)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    """
-    Get an OAuth2 access token for use with authenticated endpoints.
-
-    This is a demo endpoint that simulates OAuth2 authentication.
-    In a production environment, this would validate credentials against a database
-    and use proper token generation and validation.
-
-    For demo purposes:
-    - Username can be any value
-    - Password should be "watchtower" to get a token
-    """
-    # In a real app, you would verify the username and password
-    # For demo purposes, accept any username with password "watchtower"
-    if form_data.password != "watchtower":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # In a real app, you would create a proper JWT token
-    # For demo, just return a mock token
-    return {
-        "access_token": "demo_token_" + form_data.username,
-        "token_type": "bearer",
-        "expires_in": 3600,
-        "scope": " ".join(form_data.scopes) if form_data.scopes else "read write"
-    }
-
-# Add a new endpoint to fix existing alerts with missing IDs
-@app.post(
-    "/admin/fix-alerts",
-    response_model=dict,
-    tags=["system"],
-    summary="Fix alerts with missing or invalid IDs",
-    description="Administrative endpoint to repair alerts that have missing or invalid IDs in the database.",
-)
-async def fix_alerts(
-    api_key: str = Security(api_key_header)
-):
-    if not api_key:
-        raise HTTPException(status_code=401, detail="API key required")
-
-    try:
-        # Find alerts with missing _id fields
-        async def find_and_fix_alerts():
-            # Find alerts without _id field or with null _id
-            cursor = MongoDB.alerts.find({"$or": [{"_id": {"$exists": False}}, {"_id": None}]})
-            invalid_alerts = await cursor.to_list(length=1000)
-            fixed_count = 0
-
-            # Fix each invalid alert
-            for alert in invalid_alerts:
-                # Generate a new ObjectId
-                new_id = ObjectId()
-
-                # Remove the alert without an ID
-                await MongoDB.alerts.delete_one({"_id": alert.get("_id")})
-
-                # Insert a new one with a valid ID
-                alert["_id"] = new_id
-                await MongoDB.alerts.insert_one(alert)
-                fixed_count += 1
-
-            return {"fixed_count": fixed_count}
-
-        result = await perform_db_operation(find_and_fix_alerts)
-        return {
-            "status": "success",
-            "message": f"Fixed {result['fixed_count']} alerts with invalid IDs",
-            "timestamp": datetime.utcnow().isoformat()
-        }
-
-    except Exception as e:
-        logger.error(f"Error fixing alerts: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error fixing alerts: {str(e)}")

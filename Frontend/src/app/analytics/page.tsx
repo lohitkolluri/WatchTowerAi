@@ -32,4 +32,10 @@ export default function AnalyticsPage() {
           <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-6">
             <h3 className="text-sm font-medium text-muted-foreground">Total Logs</h3>
             <p className="text-3xl font-bold">124,892</p>
-            <p className="text-xs text-m
+            <p className="text-xs text-muted-foreground">Updated 1 hour ago</p>
+          </div>
+        </div>
+      </div>
+    </MainLayout>
+  );
+}

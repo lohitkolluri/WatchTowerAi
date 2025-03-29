@@ -178,6 +178,12 @@ WatchTowerAI provides a comprehensive API for log ingestion, monitoring, and ale
 | `/metrics` | GET | Get service performance metrics |
 | `/monitor/api` | POST | Register external API endpoints for monitoring |
 | `/monitor/api` | GET | View API monitoring results |
+| `/api/endpoints` | GET | List all registered API endpoints |
+| `/api/endpoints` | POST | Register a new API endpoint |
+| `/api/endpoints/{endpoint_id}` | GET | Get a specific API endpoint |
+| `/api/endpoints/{endpoint_id}` | PUT | Update an API endpoint |
+| `/api/endpoints/{endpoint_id}` | DELETE | Delete an API endpoint |
+| `/api/endpoints/{endpoint_id}/ping` | POST | Ping an endpoint and record results |
 | `/health` | GET | Simple health check endpoint |
 | `/{path:path}` | ANY | Universal monitoring endpoint (captures any request) |
 
@@ -213,6 +219,14 @@ The system can monitor any API endpoint by:
 3. Extracting and storing full request details (headers, body, query params)
 4. Automatically classifying and processing the captured requests
 5. Generating alerts for unexpected behavior
+
+WatchTowerAI provides a complete endpoint lifecycle management:
+- Register new endpoints via API or web interface
+- View all registered endpoints with status information
+- Update endpoint configuration as needed
+- Delete endpoints that are no longer needed
+- Automatic monitoring of registered endpoints
+- Detailed history of endpoint performance
 
 Simply direct traffic to any undefined path on your WatchTowerAI server with a `service_name` query parameter.
 
