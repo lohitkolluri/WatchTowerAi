@@ -74,3 +74,31 @@ junit-*.xml
 # Generated fake log scripts / data dumps (optional)
 fake_logs_output.json
 benchmark_results.csv
+
+# Node modules
+node_modules/
+**/node_modules/
+
+# Next.js build output
+.next/
+
+# Logs
+logs/
+*.log
+
+# Dependency directories
+.pnpm/
+.yarn/
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# OS and IDE-specific
+.DS_Store
+.env
+*.local
+.vscode/
+.idea/
