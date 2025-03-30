@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent } from "react";
+import { ChangeEvent, useCallback } from "react";
 import MainLayout from "@/components/layouts/main-layout";
 import { Calendar, Download, Filter, Search, ArrowUp, ArrowDown, Activity, Users, Clock, LucideIcon } from "lucide-react";
 import { formatNumber, formatDate } from "@/lib/utils";
@@ -68,12 +68,12 @@ interface PerformanceMetric {
 interface MetricState {
   errorRate: number;
   eventsCount: number;
-  activeUsers: number;
-  avgResponseTime: number;
+  successRate: number;
+  peakTraffic: number;
   errorRateChange: number;
   eventsCountChange: number;
-  activeUsersChange: number;
-  avgResponseTimeChange: number;
+  successRateChange: number;
+  peakTrafficChange: number;
 }
 
 interface MetricCardProps {
@@ -103,12 +103,12 @@ export default function AnalyticsPage() {
   const [metrics, setMetrics] = useState<MetricState>({
     errorRate: 0,
     eventsCount: 0,
-    activeUsers: 0,
-    avgResponseTime: 0,
+    successRate: 0,
+    peakTraffic: 0,
     errorRateChange: 0,
     eventsCountChange: 0,
-    activeUsersChange: 0,
-    avgResponseTimeChange: 0
+    successRateChange: 0,
+    peakTrafficChange: 0
   });
   const [errorRateData, setErrorRateData] = useState<Array<{ date: string; errorRate: number }>>([]);
   const [serviceErrorRates, setServiceErrorRates] = useState<ServiceErrorRate[]>([]);
@@ -123,68 +123,65 @@ export default function AnalyticsPage() {
   const [availableServices, setAvailableServices] = useState<string[]>([]);
   const [availableEnvironments, setAvailableEnvironments] = useState<string[]>([]);
 
-  const calculateHistoricalChanges = (currentData: MetricsData[], previousData: MetricsData[]) => {
+  const calculateHistoricalChanges = useCallback((currentData: MetricsData[], previousData: MetricsData[]) => {
     const current = {
       errorRate: calculateErrorRate(currentData),
       eventsCount: calculateTotalEvents(currentData),
-      activeUsers: calculateActiveUsers(currentData),
-      avgResponseTime: calculateAvgResponseTime(currentData)
+      successRate: calculateSuccessRate(currentData),
+      peakTraffic: calculatePeakTraffic(currentData)
     };
 
     const previous = {
       errorRate: calculateErrorRate(previousData),
       eventsCount: calculateTotalEvents(previousData),
-      activeUsers: calculateActiveUsers(previousData),
-      avgResponseTime: calculateAvgResponseTime(previousData)
+      successRate: calculateSuccessRate(previousData),
+      peakTraffic: calculatePeakTraffic(previousData)
     };
 
     return {
       errorRateChange: calculatePercentageChange(current.errorRate, previous.errorRate),
       eventsCountChange: calculatePercentageChange(current.eventsCount, previous.eventsCount),
-      activeUsersChange: calculatePercentageChange(current.activeUsers, previous.activeUsers),
-      avgResponseTimeChange: calculatePercentageChange(current.avgResponseTime, previous.avgResponseTime)
+      successRateChange: calculatePercentageChange(current.successRate, previous.successRate),
+      peakTrafficChange: calculatePercentageChange(current.peakTraffic, previous.peakTraffic)
     };
-  };
+  }, []);
 
-  const calculateErrorRate = (data: MetricsData[]) => {
+  const calculateErrorRate = useCallback((data: MetricsData[]) => {
     const totalEvents = data.reduce((sum, metric) => sum + metric.total, 0);
     const totalErrors = data.reduce((sum, metric) => sum + metric.errors, 0);
     return totalEvents > 0 ? (totalErrors / totalEvents) * 100 : 0;
-  };
+  }, []);
 
-  const calculateTotalEvents = (data: MetricsData[]) => {
+  const calculateTotalEvents = useCallback((data: MetricsData[]) => {
     return data.reduce((sum, metric) => sum + metric.total, 0);
-  };
+  }, []);
 
-  const calculateActiveUsers = (data: MetricsData[]) => {
-    return data.reduce((sum, metric) => sum + (metric.log_types?.auth || 0), 0);
-  };
+  const calculateSuccessRate = useCallback((data: MetricsData[]) => {
+    const totalEvents = data.reduce((sum, metric) => sum + metric.total, 0);
+    const totalErrors = data.reduce((sum, metric) => sum + metric.errors, 0);
+    return totalEvents > 0 ? ((totalEvents - totalErrors) / totalEvents) * 100 : 0;
+  }, []);
 
-  const calculateAvgResponseTime = (data: MetricsData[]) => {
-    const totalResponseTime = data.reduce((sum, metric) => {
-      const apiPerf = metric.log_types?.api_performance || 0;
-      return sum + apiPerf;
-    }, 0);
-    return data.length > 0 ? totalResponseTime / data.length : 0;
-  };
+  const calculatePeakTraffic = useCallback((data: MetricsData[]) => {
+    return data.reduce((max, metric) => Math.max(max, metric.total), 0);
+  }, []);
 
-  const calculatePercentageChange = (current: number, previous: number) => {
+  const calculatePercentageChange = useCallback((current: number, previous: number) => {
     if (previous === 0) return current > 0 ? 100 : 0;
     return ((current - previous) / previous) * 100;
-  };
+  }, []);
 
   useEffect(() => {
     async function fetchAnalyticsData() {
       try {
         setIsLoading(true);
         setError(null);
-
         // Fetch current period data
         const currentData = await api.metrics.getAll({
           service: selectedService !== "all" ? selectedService : undefined,
           environment: selectedEnvironment !== "all" ? selectedEnvironment : undefined,
           timeRange: selectedTimeRange
-        }) as MetricsData[];
+        }) as unknown as MetricsData[];
 
         // Fetch previous period data for comparison
         const previousTimeRange = getPreviousTimeRange(selectedTimeRange);
@@ -192,7 +189,7 @@ export default function AnalyticsPage() {
           service: selectedService !== "all" ? selectedService : undefined,
           environment: selectedEnvironment !== "all" ? selectedEnvironment : undefined,
           timeRange: previousTimeRange
-        }) as MetricsData[];
+        }) as unknown as MetricsData[];
 
         if (currentData && currentData.length > 0) {
           // Extract available services and environments
@@ -211,8 +208,8 @@ export default function AnalyticsPage() {
           // Calculate current metrics
           const totalEvents = calculateTotalEvents(filteredMetrics);
           const errorRate = calculateErrorRate(filteredMetrics);
-          const activeUsers = calculateActiveUsers(filteredMetrics);
-          const avgResponseTime = calculateAvgResponseTime(filteredMetrics);
+          const successRate = calculateSuccessRate(filteredMetrics);
+          const peakTraffic = calculatePeakTraffic(filteredMetrics);
 
           // Calculate historical changes
           const changes = calculateHistoricalChanges(filteredMetrics, previousData);
@@ -221,8 +218,8 @@ export default function AnalyticsPage() {
           setMetrics({
             errorRate,
             eventsCount: totalEvents,
-            activeUsers,
-            avgResponseTime,
+            successRate,
+            peakTraffic,
             ...changes
           });
 
@@ -268,7 +265,7 @@ export default function AnalyticsPage() {
     };
   }, [selectedService, selectedEnvironment, selectedTimeRange, isLiveUpdate]);
 
-  const calculateServiceMetrics = (data: MetricsData[]) => {
+  const calculateServiceMetrics = useCallback((data: MetricsData[]) => {
     const serviceMetrics = data.reduce((acc: ServiceMetrics, metric: MetricsData) => {
       if (!acc[metric.service_name]) {
         acc[metric.service_name] = { total: 0, errors: 0 };
@@ -282,9 +279,9 @@ export default function AnalyticsPage() {
       service,
       errorRate: data.total > 0 ? (data.errors / data.total) * 100 : 0
     }));
-  };
+  }, []);
 
-  const calculateEnvironmentEvents = (data: MetricsData[]) => {
+  const calculateEnvironmentEvents = useCallback((data: MetricsData[]) => {
     const envMetrics = data.reduce((acc: EnvironmentMetrics, metric: MetricsData) => {
       if (!acc[metric.environment]) {
         acc[metric.environment] = 0;
@@ -297,25 +294,25 @@ export default function AnalyticsPage() {
       environment,
       events
     }));
-  };
+  }, []);
 
-  const calculateErrorRateOverTime = (data: MetricsData[]) => {
+  const calculateErrorRateOverTime = useCallback((data: MetricsData[]) => {
     return data
       .sort((a, b) => new Date(a.last_updated).getTime() - new Date(b.last_updated).getTime())
       .map((metric: MetricsData) => ({
         date: formatDate(new Date(metric.last_updated)),
         errorRate: metric.total > 0 ? (metric.errors / metric.total) * 100 : 0
       }));
-  };
+  }, []);
 
-  const calculatePerformanceMetrics = (data: MetricsData[]) => {
+  const calculatePerformanceMetrics = useCallback((data: MetricsData[]) => {
     return data.map((metric: MetricsData) => ({
       service: metric.service_name,
       avgResponseTime: metric.log_types?.api_performance || 0
     }));
-  };
+  }, []);
 
-  const getPreviousTimeRange = (currentRange: string): string => {
+  const getPreviousTimeRange = useCallback((currentRange: string): string => {
     switch (currentRange) {
       case '24h':
         return '48h';
@@ -328,18 +325,18 @@ export default function AnalyticsPage() {
       default:
         return '7d';
     }
-  };
+  }, []);
 
   const resetMetrics = () => {
     setMetrics({
       errorRate: 0,
       eventsCount: 0,
-      activeUsers: 0,
-      avgResponseTime: 0,
+      successRate: 0,
+      peakTraffic: 0,
       errorRateChange: 0,
       eventsCountChange: 0,
-      activeUsersChange: 0,
-      avgResponseTimeChange: 0
+      successRateChange: 0,
+      peakTrafficChange: 0
     });
     setServiceErrorRates([]);
     setEnvironmentEvents([]);
@@ -350,7 +347,7 @@ export default function AnalyticsPage() {
   const handleExport = async () => {
     try {
       const response = await api.metrics.getAll();
-      const data = response.data as MetricsData[];
+      const data = response as unknown as MetricsData[];
 
       // Convert data to CSV format
       const csvContent = [
@@ -385,12 +382,6 @@ export default function AnalyticsPage() {
           <Icon className="h-4 w-4 text-muted-foreground" />
           <h3 className="text-sm font-medium">{title}</h3>
         </div>
-        {change !== undefined && (
-          <div className={`flex items-center ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-            {change >= 0 ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
-            <span className="text-xs">{Math.abs(change)}%</span>
-          </div>
-        )}
       </CardHeader>
       <CardContent>
         <div className="text-2xl font-bold">{value}</div>
@@ -439,26 +430,22 @@ export default function AnalyticsPage() {
           <MetricCard
             title="Error Rate"
             value={`${metrics.errorRate.toFixed(2)}%`}
-            change={metrics.errorRateChange}
             Icon={Activity}
           />
           <MetricCard
             title="Total Events"
             value={formatNumber(metrics.eventsCount)}
-            change={metrics.eventsCountChange}
             Icon={Filter}
           />
           <MetricCard
-            title="Active Users"
-            value={formatNumber(metrics.activeUsers)}
-            change={metrics.activeUsersChange}
-            Icon={Users}
+            title="Success Rate"
+            value={`${metrics.successRate.toFixed(2)}%`}
+            Icon={Clock}
           />
           <MetricCard
-            title="Avg. Response Time"
-            value={`${metrics.avgResponseTime.toFixed(2)} ms`}
-            change={metrics.avgResponseTimeChange}
-            Icon={Clock}
+            title="Peak Traffic"
+            value={formatNumber(metrics.peakTraffic)}
+            Icon={Users}
           />
         </div>
 

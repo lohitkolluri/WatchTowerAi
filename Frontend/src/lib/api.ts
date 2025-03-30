@@ -10,7 +10,8 @@ import {
   CreateServiceRequest,
   UpdateServiceRequest,
   CreateEndpointRequest,
-  ServiceMetrics
+  ServiceMetrics,
+  Log
 } from '@/types/common';
 
 // API service for WatchTowerAI
@@ -72,20 +73,78 @@ function buildQueryString(params?: Record<string, any>): string {
   return queryString ? `?${queryString}` : '';
 }
 
+// Helper function to get auth headers
+const getAuthHeaders = () => {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  // Add API key if available
+  const apiKey = process.env.NEXT_PUBLIC_API_KEY;
+  if (apiKey) {
+    headers['X-API-Key'] = apiKey;
+  }
+
+  // Add OAuth token if available (you'll need to implement token storage/management)
+  const token = localStorage.getItem('auth_token');
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  return headers;
+};
+
 // API endpoints
 export const api = {
   // Logs endpoints
   logs: {
-    getAll: async (params?: FilterParams): Promise<PaginatedResponse<any>> => {
-      const queryString = buildQueryString(params);
-      const response = await fetch(`${API_BASE_URL}/logs${queryString}`);
-      return handleResponse<PaginatedResponse<any>>(response, 'json');
+    getAll: async (params?: FilterParams): Promise<PaginatedResponse<Log>> => {
+      try {
+        const queryString = buildQueryString(params);
+        const response = await fetch(`${API_BASE_URL}/logs${queryString}`, {
+          headers: {
+            ...getAuthHeaders(),
+          },
+          mode: 'cors',
+          credentials: 'include'
+        });
+        return handleResponse<PaginatedResponse<Log>>(response, 'json');
+      } catch (error) {
+        console.error('Error fetching logs:', error);
+        throw error instanceof ApiRequestError ? error : new ApiRequestError(
+          'Failed to fetch logs',
+          500,
+          'FETCH_LOGS_ERROR'
+        );
+      }
     },
 
-    search: async (params?: FilterParams): Promise<PaginatedResponse<any>> => {
-      const queryString = buildQueryString(params);
-      const response = await fetch(`${API_BASE_URL}/logs/search${queryString}`);
-      return handleResponse<PaginatedResponse<any>>(response, 'json');
+    search: async (params?: FilterParams & {
+      log_type?: string;
+      log_subtype?: string;
+      tag?: string;
+      entity_type?: string;
+      entity_value?: string;
+      confidence_min?: number;
+    }): Promise<PaginatedResponse<Log>> => {
+      try {
+        const queryString = buildQueryString(params);
+        const response = await fetch(`${API_BASE_URL}/logs/search${queryString}`, {
+          headers: {
+            ...getAuthHeaders(),
+          },
+          mode: 'cors',
+          credentials: 'include'
+        });
+        return handleResponse<PaginatedResponse<Log>>(response, 'json');
+      } catch (error) {
+        console.error('Error searching logs:', error);
+        throw error instanceof ApiRequestError ? error : new ApiRequestError(
+          'Failed to search logs',
+          500,
+          'SEARCH_LOGS_ERROR'
+        );
+      }
     },
 
     ingest: async (logData: any): Promise<void> => {
@@ -93,8 +152,11 @@ export const api = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...getAuthHeaders(),
         },
         body: JSON.stringify(logData),
+        mode: 'cors',
+        credentials: 'include'
       });
       return handleResponse<void>(response, 'void');
     },
@@ -104,7 +166,13 @@ export const api = {
   alerts: {
     getAll: async (params?: FilterParams): Promise<PaginatedResponse<any>> => {
       const queryString = buildQueryString(params);
-      const response = await fetch(`${API_BASE_URL}/alerts${queryString}`);
+      const response = await fetch(`${API_BASE_URL}/alerts${queryString}`, {
+        headers: {
+          ...getAuthHeaders(),
+        },
+        mode: 'cors',
+        credentials: 'include'
+      });
       return handleResponse<PaginatedResponse<any>>(response, 'json');
     },
 
@@ -113,8 +181,11 @@ export const api = {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
+          ...getAuthHeaders(),
         },
         body: JSON.stringify({ acknowledged: true }),
+        mode: 'cors',
+        credentials: 'include'
       });
       return handleResponse<void>(response, 'void');
     },
@@ -124,7 +195,13 @@ export const api = {
   metrics: {
     getAll: async (params?: FilterParams): Promise<ServiceMetrics[]> => {
       const queryString = buildQueryString(params);
-      const response = await fetch(`${API_BASE_URL}/metrics${queryString}`);
+      const response = await fetch(`${API_BASE_URL}/metrics${queryString}`, {
+        headers: {
+          ...getAuthHeaders(),
+        },
+        mode: 'cors',
+        credentials: 'include'
+      });
       return handleResponse<ServiceMetrics[]>(response, 'json');
     },
   },
@@ -161,11 +238,23 @@ export const api = {
     getAll: async (params?: FilterParams): Promise<Service[]> => {
       try {
         const queryString = buildQueryString(params);
-        const response = await fetch(`${API_BASE_URL}/services${queryString}`);
+        const response = await fetch(`${API_BASE_URL}/services${queryString}`, {
+          headers: {
+            ...getAuthHeaders(),
+          },
+          mode: 'cors',
+          credentials: 'include'
+        });
         const data = await handleResponse<any>(response, 'json');
 
         // Also fetch metrics to combine with service data
-        const metricsResponse = await fetch(`${API_BASE_URL}/metrics`);
+        const metricsResponse = await fetch(`${API_BASE_URL}/metrics`, {
+          headers: {
+            ...getAuthHeaders(),
+          },
+          mode: 'cors',
+          credentials: 'include'
+        });
         const metricsData = await handleResponse<any>(metricsResponse, 'json');
 
         // Create a map of service metrics
@@ -183,7 +272,7 @@ export const api = {
             errorRate: metric.total_requests > 0 ? (metric.errors / metric.total_requests * 100) : 0,
             totalRequests: metric.total_requests || 0,
             errors: metric.errors || 0,
-            responseTime: metric.response_time || metric.avg_response_time || 0,
+            responseTime: metric.response_time || metric.avg_response_time || metric.response_time_ms || metric.avg_response_time_ms || 0,
             lastUpdated: metric.last_updated || metric.updated_at || new Date().toISOString()
           });
         });
@@ -234,7 +323,7 @@ export const api = {
           errorRate: metric?.total_requests > 0 ? (metric.errors / metric.total_requests * 100) : 0,
           totalRequests: metric?.total_requests || 0,
           errors: metric?.errors || 0,
-          responseTime: metric?.response_time || metric?.avg_response_time || 0,
+          responseTime: metric?.response_time || metric?.avg_response_time || metric?.response_time_ms || metric?.avg_response_time_ms || 0,
           lastUpdated: metric?.last_updated || metric?.updated_at || new Date().toISOString()
         };
 

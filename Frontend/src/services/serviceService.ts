@@ -1,6 +1,6 @@
 "use client";
 
-import { ServiceData, ServiceResponse } from '@/types/common';
+import { Service, ServiceResponse } from '@/types/common';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -26,10 +26,10 @@ async function handleResponse<T>(response: Response, type?: string): Promise<T> 
 }
 
 export const serviceService = {
-  getAllServices: async (): Promise<ServiceData[]> => {
+  getAllServices: async (): Promise<Service[]> => {
     try {
       const response = await fetch(`${API_URL}/api/services`);
-      return handleResponse<ServiceData[]>(response, 'json');
+      return handleResponse<Service[]>(response, 'json');
     } catch (error) {
       console.error('Error fetching services:', error);
       throw error;

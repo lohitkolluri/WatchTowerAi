@@ -117,14 +117,16 @@ export default function MainLayout({ children }: MainLayoutProps) {
             <Menu className="h-5 w-5" />
           </button>
           <Link href="/" className="flex items-center">
-            <Image
-              src="/image.png"
-              alt="WatchTowerAI"
-              width={160}
-              height={40}
-              className="h-30 w-30 object-contain"
-              priority
-            />
+            <div className="flex shrink-0 items-center">
+              <Image
+                src="/image.png"
+                alt="WatchTowerAI"
+                width={160}
+                height={40}
+                className="object-contain"
+                priority
+              />
+            </div>
           </Link>
 
           <div className="ml-auto flex items-center space-x-1 sm:space-x-2">

@@ -57,7 +57,7 @@ export interface AlertRule {
 export interface NotificationChannel {
   id: string;
   name: string;
-  type: "email" | "slack" | "webhook";
+  type: "email";
   config: Record<string, any>;
   enabled: boolean;
   createdAt: string;
@@ -82,12 +82,17 @@ export interface FilterParams {
   search?: string;
   environment?: string;
   status?: string;
+  service?: string;
   startDate?: string;
   endDate?: string;
   page?: number;
   pageSize?: number;
   sortBy?: string;
   sortOrder?: 'asc' | 'desc';
+  log_type?: string;
+  log_subtype?: string;
+  confidence_min?: number;
+  timeRange?: string;
 }
 
 export interface MetricsTimeRange {
@@ -191,3 +196,15 @@ export interface CreateEndpointRequest {
   headers?: Record<string, string>;
   timeout?: number;
 }
+
+export interface Log {
+  id: string;
+  timestamp: string;
+  level: LogLevel;
+  service: string;
+  message: string;
+  metadata?: Record<string, any> | null;
+  raw_payload?: Record<string, any> | null;
+}
+
+export type LogLevel = "INFO" | "WARN" | "ERROR" | "DEBUG";

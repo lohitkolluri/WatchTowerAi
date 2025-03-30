@@ -6,7 +6,7 @@ import { formatDate } from "@/lib/utils";
 import { endpointService } from "@/services/endpointService";
 import { AlertTriangle, Check, ExternalLink, Plus, RefreshCw, Search, Trash2, X, Settings, Filter, AlertCircle, Clock as ClockIcon, Lock, Edit, MoreVertical, PlusCircle, Settings2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
 import {
   Card,
@@ -52,6 +52,7 @@ import {
 } from "@/components/ui/tooltip";
 import { ArrowUpDown } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { useEnvironments, normalizeEnvironment, getEnvironmentLabel } from "@/lib/environments";
 
 // Define TypeScript interfaces for better type safety
 interface Endpoint {
@@ -64,22 +65,22 @@ interface Endpoint {
   lastChecked: Date;
 }
 
-interface EndpointBackendData {
+interface EndpointData {
   _id: string;
-  name?: string;
+  name: string;
   url: string;
   service?: string;
   status?: string;
   last_checked?: string | number;
   environment?: string;
+  description?: string;
+  method?: string;
 }
 
 interface MonitoringState {
-  [key: string]: {
-    isActive: boolean;
-    intervalId?: NodeJS.Timeout;
-    hasError: boolean;
-  };
+  isActive: boolean;
+  intervalId?: NodeJS.Timeout;
+  hasError: boolean;
 }
 
 // Load initial monitoring state from localStorage
@@ -90,7 +91,7 @@ const loadMonitoringState = () => {
     try {
       const parsed = JSON.parse(saved);
       // Convert the saved state to match our MonitoringState interface
-      const state: MonitoringState = {};
+      const state: Record<string, MonitoringState> = {};
       Object.entries(parsed).forEach(([id, value]) => {
         if (typeof value === 'object' && value !== null) {
           state[id] = {
@@ -113,10 +114,12 @@ export default function EndpointsPage() {
   const router = useRouter();
   const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [showRegisterModal, setShowRegisterModal] = useState(false);
-  const [monitoringState, setMonitoringState] = useState<MonitoringState>(loadMonitoringState());
+  const [monitoringState, setMonitoringState] = useState<Record<string, MonitoringState>>(loadMonitoringState());
+  const [monitoringInterval, setMonitoringInterval] = useState<NodeJS.Timeout | null>(null);
   const [endpointToDelete, setEndpointToDelete] = useState<Endpoint | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -126,6 +129,12 @@ export default function EndpointsPage() {
     service: "all",
     status: "all"
   });
+  const {
+    allEnvironments,
+    customEnvironments,
+    addEnvironment,
+    removeEnvironment
+  } = useEnvironments();
   const [environments, setEnvironments] = useState<string[]>([]);
   const [services, setServices] = useState<string[]>([]);
   const [selectedEndpoint, setSelectedEndpoint] = useState<Endpoint | null>(null);
@@ -136,7 +145,143 @@ export default function EndpointsPage() {
   }>({ key: 'name', direction: 'asc' });
   const [showEnvironmentModal, setShowEnvironmentModal] = useState(false);
   const [newEnvironment, setNewEnvironment] = useState("");
-  const [customEnvironments, setCustomEnvironments] = useState<string[]>([]);
+
+  // Function to fetch and format endpoints
+  const fetchEndpoints = useCallback(async (isManualRefresh = false) => {
+    try {
+      if (isManualRefresh) {
+        setIsRefreshing(true);
+      } else {
+        setIsLoading(true);
+      }
+      setError(null);
+
+      // Clear success message if it exists
+      if (successMessage) {
+        setSuccessMessage(null);
+      }
+
+      const response = await endpointService.getAllEndpoints();
+
+      // Format endpoint data with normalized environments
+      const formattedEndpoints = response.map((endpoint: any) => ({
+        ...endpoint,
+        environment: normalizeEnvironment(endpoint.environment),
+        status: endpoint.status || "active",
+      }));
+
+      setEndpoints(formattedEndpoints);
+
+      // Extract unique environments and services from endpoints
+      const uniqueEnvironments = [...new Set(formattedEndpoints.map(e => e.environment))]
+        .filter(Boolean)
+        .sort();
+
+      const uniqueServices = [...new Set(formattedEndpoints.map(e => e.service))]
+        .filter(Boolean)
+        .sort();
+
+      setEnvironments(uniqueEnvironments);
+      setServices(uniqueServices);
+    } catch (error) {
+      console.error("Error fetching endpoints:", error);
+      setError("Failed to fetch endpoints. Please try again later.");
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [successMessage]);
+
+  // Ping a single endpoint
+  const pingEndpoint = async (id: string, url: string) => {
+    try {
+      await endpointService.pingEndpoint(id);
+      setMonitoringState(prev => ({
+        ...prev,
+        [id]: {
+          ...prev[id],
+          hasError: false
+        }
+      }));
+      return true;
+    } catch (error) {
+      console.error(`Error pinging endpoint ${id}:`, error);
+      setMonitoringState(prev => ({
+        ...prev,
+        [id]: {
+          ...prev[id],
+          hasError: true
+        }
+      }));
+      return false;
+    }
+  };
+
+  // Ping all endpoints
+  const pingAllEndpoints = async () => {
+    const results = await Promise.all(
+      endpoints.map(endpoint => pingEndpoint(endpoint.id, endpoint.url))
+    );
+    return results.every(result => result);
+  };
+
+  // Start monitoring the endpoints
+  const startMonitoring = useCallback(() => {
+    if (monitoringInterval) {
+      clearInterval(monitoringInterval);
+    }
+
+    // Set active state for all endpoints
+    setMonitoringState(prev => {
+      const newState = { ...prev };
+      endpoints.forEach(endpoint => {
+        newState[endpoint.id] = {
+          ...newState[endpoint.id],
+          isActive: true
+        };
+      });
+      return newState;
+    });
+
+    // Create a new interval
+    const interval = setInterval(async () => {
+      await pingAllEndpoints();
+    }, 60000); // Check every minute
+
+    setMonitoringInterval(interval);
+  }, [endpoints, monitoringInterval]);
+
+  // Stop monitoring a specific endpoint
+  const stopMonitoring = (id: string) => {
+    setMonitoringState(prev => ({
+      ...prev,
+      [id]: {
+        ...prev[id],
+        isActive: false
+      }
+    }));
+  };
+
+  // Toggle monitoring for a specific endpoint
+  const toggleMonitoring = (id: string, url: string) => {
+    const isCurrentlyActive = monitoringState[id]?.isActive || false;
+
+    if (isCurrentlyActive) {
+      stopMonitoring(id);
+    } else {
+      // Set the specific endpoint to active state
+      setMonitoringState(prev => ({
+        ...prev,
+        [id]: {
+          ...prev[id],
+          isActive: true
+        }
+      }));
+
+      // Ping it immediately
+      pingEndpoint(id, url);
+    }
+  };
 
   // Save monitoring state to localStorage whenever it changes
   useEffect(() => {
@@ -152,107 +297,49 @@ export default function EndpointsPage() {
     localStorage.setItem('monitoringState', JSON.stringify(stateToSave));
   }, [monitoringState]);
 
-  // Restart monitoring for previously active endpoints when component mounts
+  // Check local storage for monitoring state and start monitoring if active
   useEffect(() => {
-    Object.entries(monitoringState).forEach(([id, state]) => {
-      if (state.isActive) {
-        const endpoint = endpoints.find(e => e.id === id);
-        if (endpoint) {
-          startMonitoring(id, endpoint.url);
+    const savedState = localStorage.getItem('monitoringState');
+    if (savedState) {
+      try {
+        const parsedState = JSON.parse(savedState);
+        // Convert to proper state format if needed
+        if (typeof parsedState === 'object') {
+          setMonitoringState(parsedState);
         }
+      } catch (e) {
+        console.error('Error loading monitoring state:', e);
       }
-    });
-  }, [endpoints.length]); // Only run when endpoints are loaded
+    }
+  }, []);
+
+  // Start monitoring active endpoints when endpoints are loaded
+  useEffect(() => {
+    if (endpoints.length > 0) {
+      const hasActiveEndpoints = Object.values(monitoringState).some(state => state.isActive);
+      if (hasActiveEndpoints) {
+        startMonitoring();
+      }
+    }
+  }, [endpoints, startMonitoring]);
+
+  // Initial fetch of endpoints
+  useEffect(() => {
+    fetchEndpoints();
+
+    // Set up refresh interval
+    const intervalId = setInterval(() => {
+      fetchEndpoints();
+    }, 30000); // Refresh every 30 seconds
+
+    // Cleanup on unmount
+    return () => clearInterval(intervalId);
+  }, [fetchEndpoints]);
 
   // Update the endpoints array when filters change
   useEffect(() => {
     fetchEndpoints();
-  }, [filters, searchQuery, customEnvironments]); // Add customEnvironments as a dependency
-
-  // Function to fetch and format endpoints
-  const fetchEndpoints = async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      const response = await endpointService.getAllEndpoints();
-
-      if (!response) {
-        setEndpoints([]);
-        setError("No data received from server");
-        return;
-      }
-
-      const endpointsData = response;
-
-      const formattedEndpoints = endpointsData.map((endpoint: EndpointBackendData) => ({
-        id: endpoint._id,
-        name: endpoint.name || `${endpoint.service || 'Unnamed'} API`,
-        url: endpoint.url,
-        status: endpoint.status || "active",
-        service: endpoint.service || "Unknown",
-        environment: endpoint.environment || "production",
-        lastChecked: endpoint.last_checked ? new Date(endpoint.last_checked) : new Date()
-      }));
-
-      // Update endpoint status based on monitoring state
-      const updatedEndpoints = formattedEndpoints.map((endpoint: Endpoint) => {
-        const monitoring = monitoringState[endpoint.id];
-        if (monitoring) {
-          return {
-            ...endpoint,
-            status: monitoring.isActive ? (monitoring.hasError ? 'error' : 'active') : 'inactive'
-          };
-        }
-        return endpoint;
-      });
-
-      // Create a list of unique environments that combines standard, custom, and endpoint environments
-      const uniqueEnvironments = Array.from(new Set([
-        ...standardEnvValues,
-        ...customEnvironments,
-        ...updatedEndpoints.map((e: Endpoint) => e.environment?.toLowerCase() || 'production')
-      ]));
-
-      const uniqueServices = Array.from(new Set(updatedEndpoints.map((e: Endpoint) => e.service))) as string[];
-      setEnvironments(uniqueEnvironments as string[]);
-      setServices(uniqueServices);
-
-      // Apply filters
-      let filteredEndpoints = updatedEndpoints;
-      if (filters.environment && filters.environment !== 'all') {
-        filteredEndpoints = filteredEndpoints.filter((e: Endpoint) => e.environment === filters.environment);
-      }
-      if (filters.service && filters.service !== 'all') {
-        filteredEndpoints = filteredEndpoints.filter((e: Endpoint) => e.service === filters.service);
-      }
-      if (filters.status && filters.status !== 'all') {
-        filteredEndpoints = filteredEndpoints.filter((e: Endpoint) => e.status === filters.status);
-      }
-      if (searchQuery) {
-        filteredEndpoints = filteredEndpoints.filter((e: Endpoint) => {
-          const query = searchQuery.toLowerCase();
-          return (
-            e.url.toLowerCase().includes(query) ||
-            (e.service?.toLowerCase() || '').includes(query) ||
-            (e.environment?.toLowerCase() || '').includes(query)
-          );
-        });
-      }
-
-      setEndpoints(filteredEndpoints);
-    } catch (err: unknown) {
-      console.error("Error fetching endpoints:", err);
-      toast.error(err instanceof Error ? err.message : "Failed to fetch endpoints");
-      setEndpoints([]);
-      setError(err instanceof Error ? err.message : "An error occurred");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchEndpoints();
-  }, [searchQuery, monitoringState]); // Add monitoringState as a dependency
+  }, [filters, searchQuery, fetchEndpoints]);
 
   // Function to handle endpoint registration
   const handleRegisterEndpoint = async (formData: Record<string, any>) => {
@@ -288,7 +375,7 @@ export default function EndpointsPage() {
       // Start monitoring the new endpoint after a short delay to ensure registration is complete
       if (newEndpoint && newEndpoint.endpoint && newEndpoint.endpoint._id) {
         setTimeout(() => {
-          startMonitoring(newEndpoint.endpoint._id, newEndpoint.endpoint.url);
+          startMonitoring();
         }, 1000);
       }
 
@@ -300,142 +387,6 @@ export default function EndpointsPage() {
       return Promise.reject(err);
     }
   };
-
-  // Function to send a request to an endpoint to generate logs
-  const pingEndpoint = async (id: string, url: string) => {
-    try {
-      // Make an API call to our own service to ping the endpoint
-      const result = await endpointService.pingEndpoint(id);
-      console.log(`Successfully pinged endpoint ${id}:`, result);
-
-      // Update the endpoint's status in the UI
-      setEndpoints(prevEndpoints =>
-        prevEndpoints.map(endpoint => {
-          if (endpoint.id === id) {
-            return {
-              ...endpoint,
-              lastChecked: new Date(),
-              status: 'active'
-            };
-          }
-          return endpoint;
-        })
-      );
-    } catch (err) {
-      console.error(`Error pinging endpoint ${id}:`, err);
-      const errorMessage = err instanceof Error ? err.message : "Failed to ping endpoint";
-
-      // Show error toast only for the first failure
-      if (!monitoringState[id]?.hasError) {
-        toast.error(errorMessage);
-      }
-
-      // Update the endpoint's status in the UI
-      setEndpoints(prevEndpoints =>
-        prevEndpoints.map(endpoint => {
-          if (endpoint.id === id) {
-            return {
-              ...endpoint,
-              lastChecked: new Date(),
-              status: 'error'
-            };
-          }
-          return endpoint;
-        })
-      );
-
-      // Update monitoring state to track error
-      setMonitoringState(prev => ({
-        ...prev,
-        [id]: {
-          ...prev[id],
-          hasError: true
-        }
-      }));
-    }
-  };
-
-  // Start monitoring an endpoint
-  const startMonitoring = (id: string, url: string) => {
-    try {
-      // Stop any existing monitoring for this endpoint
-      stopMonitoring(id);
-
-      // Ping immediately when starting monitoring
-      pingEndpoint(id, url);
-
-      // Create a new interval to ping the endpoint every 30 seconds
-      const intervalId = setInterval(() => {
-        pingEndpoint(id, url);
-      }, 30000); // 30 seconds
-
-      // Update monitoring state
-      setMonitoringState(prev => ({
-        ...prev,
-        [id]: {
-          isActive: true,
-          intervalId,
-          hasError: false
-        }
-      }));
-
-      // Show success message
-      toast.success("Started monitoring endpoint");
-    } catch (error) {
-      console.error("Error starting monitoring:", error);
-      const errorMessage = error instanceof Error ? error.message : "Failed to start monitoring";
-      toast.error(errorMessage);
-
-      // Update monitoring state
-      setMonitoringState(prev => ({
-        ...prev,
-        [id]: {
-          isActive: false,
-          intervalId: undefined,
-          hasError: true
-        }
-      }));
-    }
-  };
-
-  // Stop monitoring an endpoint
-  const stopMonitoring = (id: string) => {
-    const monitoring = monitoringState[id];
-    if (monitoring?.intervalId) {
-      clearInterval(monitoring.intervalId);
-    }
-
-    setMonitoringState(prev => ({
-      ...prev,
-      [id]: {
-        isActive: false,
-        intervalId: undefined,
-        hasError: false
-      }
-    }));
-  };
-
-  // Toggle monitoring for an endpoint
-  const toggleMonitoring = (id: string, url: string) => {
-    const current = monitoringState[id];
-
-    if (current && current.isActive) {
-      stopMonitoring(id);
-    } else {
-      startMonitoring(id, url);
-    }
-  };
-
-  // Cleanup monitoring intervals when component unmounts
-  useEffect(() => {
-    return () => {
-      Object.entries(monitoringState).forEach(([id, state]) => {
-        if (state.intervalId) {
-          clearInterval(state.intervalId);
-        }
-      });
-    };
-  }, []);
 
   // Handle search input change
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -508,26 +459,47 @@ export default function EndpointsPage() {
     setShowRegisterModal(true);
   };
 
-  // Enhanced submit handler for both create and edit
-  const handleEndpointSubmit = async (formData: Record<string, any>) => {
+  // Function to handle endpoint submission - both create and update
+  const handleEndpointSubmit = async (formData: Record<string, any>): Promise<void> => {
     try {
       if (isEditMode && selectedEndpoint) {
-        // Update existing endpoint
-        await endpointService.updateEndpoint(selectedEndpoint.id, formData);
-        toast.success("Endpoint updated successfully");
-      } else {
-        // Create new endpoint
-        await handleRegisterEndpoint(formData);
-      }
+        // Handle update
+        // Format data for update
+        const updateData = {
+          name: formData.name,
+          url: formData.url,
+          method: formData.method,
+          service: formData.service,
+          environment: formData.environment,
+          description: formData.description
+        };
 
-      // Reset state and refresh endpoints
-      setIsEditMode(false);
-      setSelectedEndpoint(null);
-      setShowRegisterModal(false);
-      await fetchEndpoints();
-    } catch (err) {
-      console.error("Error saving endpoint:", err);
-      toast.error("Failed to save endpoint");
+        // Call API to update endpoint
+        const result = await endpointService.updateEndpoint(selectedEndpoint.id, updateData);
+
+        if (result) {
+          const newEndpoint = result.endpoint;
+          toast.success("Endpoint updated successfully");
+          fetchEndpoints();  // Refresh the list
+          setIsEditMode(false);
+          setSelectedEndpoint(null);
+          setShowRegisterModal(false);
+
+          // Start monitoring automatically if enabled
+          if (newEndpoint && newEndpoint._id && monitoringState[newEndpoint._id]?.isActive) {
+            // Ping this endpoint immediately
+            pingEndpoint(newEndpoint._id, newEndpoint.url);
+          }
+        }
+      } else {
+        // Handle create new
+        await handleRegisterEndpoint(formData);
+        setShowRegisterModal(false);
+      }
+    } catch (error) {
+      console.error("Error submitting endpoint:", error);
+      const errorMessage = error instanceof Error ? error.message : "An error occurred submitting the endpoint";
+      toast.error(errorMessage);
     }
   };
 
@@ -549,86 +521,34 @@ export default function EndpointsPage() {
       : bValue.localeCompare(aValue);
   });
 
-  // Define standard environments with proper capitalization
-  const standardEnvironments = [
-    { value: 'production', label: 'Production' },
-    { value: 'staging', label: 'Staging' },
-    { value: 'development', label: 'Development' },
-    { value: 'testing', label: 'Testing' },
-    { value: 'qa', label: 'QA' }
-  ];
-
-  // Standard environment values for comparison
-  const standardEnvValues = standardEnvironments.map(env => env.value);
-
-  // Add after other useEffect hooks
-  useEffect(() => {
-    // Load custom environments from localStorage
-    const saved = localStorage.getItem('customEnvironments');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          setCustomEnvironments(parsed);
-        }
-      } catch (e) {
-        console.error('Error loading custom environments:', e);
-      }
-    }
-  }, []);
-
-  // Add after other functions
+  // Update handleAddEnvironment to use our hook function
   const handleAddEnvironment = () => {
     if (!newEnvironment.trim()) return;
-
-    const environment = newEnvironment.trim().toLowerCase();
-
-    // Check if environment already exists in standard environments
-    if (standardEnvValues.includes(environment)) {
-      toast.warning(`'${environment}' is already a standard environment`);
-      setNewEnvironment("");
-      return;
-    }
-
-    // Check if it's already in custom environments
-    if (customEnvironments.includes(environment)) {
-      toast.info(`Environment '${environment}' already exists`);
-      setNewEnvironment("");
-      return;
-    }
-
-    // Add the new environment
-    const updatedEnvironments = [...customEnvironments, environment];
-    setCustomEnvironments(updatedEnvironments);
-    localStorage.setItem('customEnvironments', JSON.stringify(updatedEnvironments));
-    toast.success(`Added new environment: ${environment}`);
+    addEnvironment(newEnvironment);
     setNewEnvironment("");
+    toast.success(`Added new environment: ${getEnvironmentLabel(newEnvironment)}`);
   };
 
+  // Update handleRemoveEnvironment to use our hook function
   const handleRemoveEnvironment = (env: string) => {
-    // Prevent removing standard environments
-    if (standardEnvValues.includes(env)) {
-      toast.error("Cannot remove standard environments");
-      return;
+    try {
+      removeEnvironment(env);
+      toast.success(`Removed environment: ${getEnvironmentLabel(env)}`);
+    } catch (error) {
+      toast.error("Failed to remove environment");
     }
-
-    const updatedEnvironments = customEnvironments.filter(e => e !== env);
-    setCustomEnvironments(updatedEnvironments);
-    localStorage.setItem('customEnvironments', JSON.stringify(updatedEnvironments));
-    toast.success(`Removed environment: ${env.charAt(0).toUpperCase() + env.slice(1)}`);
   };
 
   // Get all distinct environments from endpoints and add standard ones
   const uniqueEnvironments = Array.from(new Set([
-    ...standardEnvValues,
-    ...customEnvironments,
+    ...environments,
     ...(sortedEndpoints.map((e: Endpoint) => e.environment?.toLowerCase() || 'production'))
   ])).sort();
 
   // Format environments for display with proper capitalization
   const formattedEnvironments = uniqueEnvironments.map(env => {
     // Check if it's a standard environment
-    const standardEnv = standardEnvironments.find(e => e.value === env);
+    const standardEnv = allEnvironments.find(e => e.value === env);
     if (standardEnv) {
       return standardEnv.label;
     }
@@ -666,12 +586,14 @@ export default function EndpointsPage() {
 
         <div className="space-y-1 max-h-[300px] overflow-y-auto pr-2">
           <div className="font-medium text-sm text-muted-foreground mb-2">Standard Environments</div>
-          {standardEnvironments.map((env) => (
-            <div key={env.value} className="flex items-center justify-between py-2 px-3 rounded-md bg-muted/50">
-              <span className="text-sm font-medium">{env.label}</span>
-              <Badge variant="outline" className="text-xs">Default</Badge>
-            </div>
-          ))}
+          {allEnvironments
+            .filter(env => !customEnvironments.includes(env.value))
+            .map((env) => (
+              <div key={env.value} className="flex items-center justify-between py-2 px-3 rounded-md bg-muted/50">
+                <span className="text-sm font-medium">{env.label}</span>
+                <Badge variant="outline" className="text-xs">Default</Badge>
+              </div>
+            ))}
 
           {customEnvironments.length > 0 && (
             <div className="font-medium text-sm text-muted-foreground mt-4 mb-2">Custom Environments</div>
@@ -679,7 +601,7 @@ export default function EndpointsPage() {
 
           {customEnvironments.map((env) => (
             <div key={env} className="flex items-center justify-between py-2 px-3 rounded-md hover:bg-muted/30">
-              <span className="text-sm">{env.charAt(0).toUpperCase() + env.slice(1)}</span>
+              <span className="text-sm">{getEnvironmentLabel(env)}</span>
               <Button
                 variant="ghost"
                 size="sm"
@@ -733,27 +655,18 @@ export default function EndpointsPage() {
               <div className="flex-1">
                 <Select
                   value={filters.environment}
-                  onValueChange={(value) => setFilters(prev => ({ ...prev, environment: value }))}
+                  onValueChange={(value) => setFilters({...filters, environment: value})}
                 >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Environment" />
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="All Environments" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Environments</SelectItem>
-                    {environments.map(env => {
-                      // Capitalize first letter for display
-                      let displayName = env.charAt(0).toUpperCase() + env.slice(1);
-
-                      // If it's a standard environment, use the proper label
-                      const standardEnv = standardEnvironments.find(e => e.value === env);
-                      if (standardEnv) {
-                        displayName = standardEnv.label;
-                      }
-
-                      return (
-                        <SelectItem key={env} value={env}>{displayName}</SelectItem>
-                      );
-                    })}
+                    {environments.map(env => (
+                      <SelectItem key={env} value={env}>
+                        {getEnvironmentLabel(env)}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

@@ -38,7 +38,6 @@ ENV/
 *.crt
 
 # Logs
-logs/
 *.log
 
 # VS Code

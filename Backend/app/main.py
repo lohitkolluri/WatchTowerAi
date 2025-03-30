@@ -311,10 +311,12 @@ async def add_custom_ui(request: Request, call_next):
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000", "https://watchtower-ai.vercel.app", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-API-Key"],
+    allow_headers=["Content-Type", "Authorization", "X-API-Key", "Accept", "Origin", "User-Agent", "X-Requested-With"],
+    max_age=3600,  # Cache preflight response for 1 hour
+    expose_headers=["X-Process-Time", "X-Request-ID"]
 )
 
 # Define API tags for better documentation organization
