@@ -115,6 +115,24 @@ export const api = {
     },
   },
 
+  // Settings endpoints
+  settings: {
+    getSMTP: async () => {
+      const response = await fetch(`${API_BASE_URL}/settings/smtp`);
+      return handleResponse(response);
+    },
+    updateSMTP: async (smtpConfig: any) => {
+      const response = await fetch(`${API_BASE_URL}/settings/smtp`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(smtpConfig),
+      });
+      return handleResponse(response);
+    },
+  },
+
   // Health check
   health: async () => {
     const response = await fetch(`${API_BASE_URL}/health`);

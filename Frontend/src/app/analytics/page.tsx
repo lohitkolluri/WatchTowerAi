@@ -1,363 +1,504 @@
 "use client";
 
+import { ChangeEvent } from "react";
 import MainLayout from "@/components/layouts/main-layout";
-import { Calendar, Download, Filter, Search } from "lucide-react";
-import { formatNumber } from "@/lib/utils";
+import { Calendar, Download, Filter, Search, ArrowUp, ArrowDown, Activity, Users, Clock, LucideIcon } from "lucide-react";
+import { formatNumber, formatDate } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useEffect, useState } from "react";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend } from "recharts";
+import { toast } from "sonner";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+
+interface MetricsData {
+  _id: string;
+  service_name: string;
+  environment: string;
+  total: number;
+  errors: number;
+  last_updated: string;
+  log_types?: {
+    [key: string]: number;
+  };
+  log_subtypes?: {
+    [key: string]: {
+      [key: string]: number;
+    };
+  };
+}
+
+interface ServiceErrorRate {
+  service: string;
+  errorRate: number;
+}
+
+interface EnvironmentEvent {
+  environment: string;
+  events: number;
+}
+
+interface PerformanceMetric {
+  service: string;
+  avgResponseTime: number;
+}
+
+interface MetricState {
+  errorRate: number;
+  eventsCount: number;
+  activeUsers: number;
+  avgResponseTime: number;
+  errorRateChange: number;
+  eventsCountChange: number;
+  activeUsersChange: number;
+  avgResponseTimeChange: number;
+}
+
+interface MetricCardProps {
+  title: string;
+  value: string | number;
+  change?: number;
+  Icon: LucideIcon;
+}
+
+interface ServiceMetrics {
+  [key: string]: {
+    total: number;
+    errors: number;
+  };
+}
+
+interface EnvironmentMetrics {
+  [key: string]: number;
+}
+
+interface ChartDataPoint {
+  name: string;
+  value: number;
+}
 
 export default function AnalyticsPage() {
-  const [metrics, setMetrics] = useState({
+  const [metrics, setMetrics] = useState<MetricState>({
     errorRate: 0,
     eventsCount: 0,
     activeUsers: 0,
-    avgResponseTime: 0
+    avgResponseTime: 0,
+    errorRateChange: 0,
+    eventsCountChange: 0,
+    activeUsersChange: 0,
+    avgResponseTimeChange: 0
   });
-  const [errorRateData, setErrorRateData] = useState([]);
-  const [serviceErrorRates, setServiceErrorRates] = useState([]);
-  const [environmentEvents, setEnvironmentEvents] = useState([]);
-  const [performanceMetrics, setPerformanceMetrics] = useState([]);
+  const [errorRateData, setErrorRateData] = useState<Array<{ date: string; errorRate: number }>>([]);
+  const [serviceErrorRates, setServiceErrorRates] = useState<ServiceErrorRate[]>([]);
+  const [environmentEvents, setEnvironmentEvents] = useState<EnvironmentEvent[]>([]);
+  const [performanceMetrics, setPerformanceMetrics] = useState<PerformanceMetric[]>([]);
   const [selectedService, setSelectedService] = useState("all");
   const [selectedEnvironment, setSelectedEnvironment] = useState("all");
+  const [selectedTimeRange, setSelectedTimeRange] = useState("7d");
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchAnalyticsData() {
       try {
         setIsLoading(true);
+        setError(null);
 
-        // Fetch metrics data from the API
         const metricsData = await api.metrics.getAll({
           service: selectedService !== "all" ? selectedService : undefined,
-          environment: selectedEnvironment !== "all" ? selectedEnvironment : undefined
-        });
+          environment: selectedEnvironment !== "all" ? selectedEnvironment : undefined,
+          timeRange: selectedTimeRange
+        }) as MetricsData[];
 
         if (metricsData && metricsData.length > 0) {
-          // Calculate overall metrics
-          let totalEvents = 0;
-          let totalErrors = 0;
-          let totalServices = new Set();
-          let responseTimesSum = 0;
-          let responseTimesCount = 0;
-
-          // Process metrics by service for error rates
-          const serviceMap = new Map();
-          const environmentMap = new Map();
-          const performanceMap = new Map();
-
-          metricsData.forEach(metric => {
-            // Count total events and errors
-            totalEvents += metric.total || 0;
-            totalErrors += metric.errors || 0;
-            totalServices.add(metric.service_name);
-
-            // Track metrics by service
-            if (!serviceMap.has(metric.service_name)) {
-              serviceMap.set(metric.service_name, { total: 0, errors: 0 });
-            }
-            const serviceStats = serviceMap.get(metric.service_name);
-            serviceStats.total += metric.total || 0;
-            serviceStats.errors += metric.errors || 0;
-
-            // Track metrics by environment
-            if (!environmentMap.has(metric.environment)) {
-              environmentMap.set(metric.environment, 0);
-            }
-            environmentMap.set(metric.environment, environmentMap.get(metric.environment) + (metric.total || 0));
-
-            // If there's response time data available (assuming it might be in the API)
-            if (metric.avg_response_time) {
-              responseTimesSum += metric.avg_response_time;
-              responseTimesCount++;
-
-              if (!performanceMap.has(metric.service_name)) {
-                performanceMap.set(metric.service_name, { sum: 0, count: 0 });
-              }
-              const perfStats = performanceMap.get(metric.service_name);
-              perfStats.sum += metric.avg_response_time;
-              perfStats.count++;
-            }
+          // Filter metrics based on selected service and environment
+          const filteredMetrics = metricsData.filter((metric: MetricsData) => {
+            const serviceMatch = selectedService === "all" || metric.service_name === selectedService;
+            const envMatch = selectedEnvironment === "all" || metric.environment === selectedEnvironment;
+            return serviceMatch && envMatch;
           });
 
-          // Calculate overall error rate
-          const overallErrorRate = totalEvents > 0 ? (totalErrors / totalEvents) * 100 : 0;
+          // Calculate current metrics
+          const totalEvents = filteredMetrics.reduce((sum: number, metric: MetricsData) => sum + metric.total, 0);
+          const totalErrors = filteredMetrics.reduce((sum: number, metric: MetricsData) => sum + metric.errors, 0);
+          const errorRate = totalEvents > 0 ? (totalErrors / totalEvents) * 100 : 0;
 
-          // Update the metrics state with real data only
-          setMetrics({
-            errorRate: parseFloat(overallErrorRate.toFixed(2)),
-            eventsCount: totalEvents,
-            activeUsers: metricsData.reduce((sum, metric) => sum + (metric.active_users || 0), 0),
-            avgResponseTime: responseTimesCount > 0 ? Math.round(responseTimesSum / responseTimesCount) : 0
-          });
+          // Calculate service error rates
+          const serviceMetrics = filteredMetrics.reduce((acc: ServiceMetrics, metric: MetricsData) => {
+            if (!acc[metric.service_name]) {
+              acc[metric.service_name] = { total: 0, errors: 0 };
+            }
+            acc[metric.service_name].total += metric.total;
+            acc[metric.service_name].errors += metric.errors;
+            return acc;
+          }, {} as ServiceMetrics);
 
-          // Format service error rates
-          const serviceErrorRatesData = Array.from(serviceMap.entries()).map(([service, stats]) => ({
+          const serviceErrorRatesData = Object.entries(serviceMetrics).map(([service, data]) => ({
             service,
-            errorRate: stats.total > 0 ? parseFloat(((stats.errors / stats.total) * 100).toFixed(2)) : 0
+            errorRate: (data as { total: number; errors: number }).total > 0 ? ((data as { total: number; errors: number }).errors / (data as { total: number; errors: number }).total) * 100 : 0
           }));
-          setServiceErrorRates(serviceErrorRatesData);
 
-          // Format environment events
-          const environmentEventsData = Array.from(environmentMap.entries()).map(([environment, events]) => ({
+          // Calculate environment events
+          const environmentMetrics = filteredMetrics.reduce((acc: EnvironmentMetrics, metric: MetricsData) => {
+            if (!acc[metric.environment]) {
+              acc[metric.environment] = 0;
+            }
+            acc[metric.environment] += metric.total;
+            return acc;
+          }, {} as EnvironmentMetrics);
+
+          const environmentEventsData = Object.entries(environmentMetrics).map(([environment, events]) => ({
             environment,
-            events
+            events: events as number
           }));
+
+          // Calculate error rate over time
+          const errorRateOverTime = filteredMetrics.map((metric: MetricsData) => ({
+            date: formatDate(new Date(metric.last_updated)),
+            errorRate: metric.total > 0 ? (metric.errors / metric.total) * 100 : 0
+          }));
+
+          // Update state
+          setMetrics({
+            errorRate,
+            eventsCount: totalEvents,
+            activeUsers: filteredMetrics.reduce((sum, metric) => sum + (metric.log_types?.auth || 0), 0),
+            avgResponseTime: filteredMetrics.reduce((sum, metric) => {
+              const apiPerf = metric.log_types?.api_performance || 0;
+              return sum + apiPerf;
+            }, 0) / filteredMetrics.length || 0,
+            errorRateChange: 0, // We'll calculate this when we implement historical data
+            eventsCountChange: 0,
+            activeUsersChange: 0,
+            avgResponseTimeChange: 0
+          });
+
+          setServiceErrorRates(serviceErrorRatesData);
           setEnvironmentEvents(environmentEventsData);
-
-          // Format performance metrics using only real data
-          const performanceData = Array.from(performanceMap.entries()).map(([service, stats]) => ({
-            service,
-            avgResponseTime: stats.count > 0 ? Math.round(stats.sum / stats.count) : 0
-          }));
-
-          // Only use real performance data, no mock data
-          setPerformanceMetrics(performanceData);
-
-          // If no performance data is available, the UI will show an empty state
-
-          // Use real error rate data from the API if available
-          // Check if the API response includes historical error rate data
-          if (metricsData.some(metric => metric.historical_error_rates)) {
-            const errorRatePoints = [];
-
-            // Process historical data from the API
-            metricsData.forEach(metric => {
-              if (metric.historical_error_rates && Array.isArray(metric.historical_error_rates)) {
-                metric.historical_error_rates.forEach(point => {
-                  const date = new Date(point.timestamp);
-                  const day = date.getDate();
-                  const month = date.toLocaleString('default', { month: 'short' });
-
-                  errorRatePoints.push({
-                    date: `${month} ${day}`,
-                    errorRate: parseFloat(point.error_rate.toFixed(2)),
-                    timestamp: date,
-                    service: metric.service_name
-                  });
-                });
-              }
-            });
-
-            // Sort by timestamp
-            errorRatePoints.sort((a, b) => a.timestamp - b.timestamp);
-            setErrorRateData(errorRatePoints);
-          } else {
-            // If no historical data is available, use an empty array
-            setErrorRateData([]);
-          }
+          setErrorRateData(errorRateOverTime);
         } else {
-          // If no data is returned, set default values
+          // Reset metrics if no data
           setMetrics({
             errorRate: 0,
             eventsCount: 0,
             activeUsers: 0,
-            avgResponseTime: 0
+            avgResponseTime: 0,
+            errorRateChange: 0,
+            eventsCountChange: 0,
+            activeUsersChange: 0,
+            avgResponseTimeChange: 0
           });
           setServiceErrorRates([]);
           setEnvironmentEvents([]);
-          setPerformanceMetrics([]);
           setErrorRateData([]);
         }
-      } catch (err) {
+      } catch (err: unknown) {
         console.error("Error fetching analytics data:", err);
-        setError(err.message);
+        setError(err instanceof Error ? err.message : "An error occurred");
+        toast.error("Failed to fetch analytics data");
       } finally {
         setIsLoading(false);
       }
     }
 
     fetchAnalyticsData();
-  }, [selectedService, selectedEnvironment]);
+  }, [selectedService, selectedEnvironment, selectedTimeRange]);
+
+  const handleExport = async () => {
+    try {
+      const response = await api.metrics.getAll();
+      const data = response.data as MetricsData[];
+
+      // Convert data to CSV format
+      const csvContent = [
+        ["Last Updated", "Service", "Environment", "Total Events", "Errors", "Error Rate", "Log Types"].join(","),
+        ...data.map(row => [
+          row.last_updated,
+          row.service_name,
+          row.environment,
+          row.total,
+          row.errors,
+          row.total > 0 ? ((row.errors / row.total) * 100).toFixed(2) + '%' : '0%',
+          row.log_types ? JSON.stringify(row.log_types) : 'N/A'
+        ].join(","))
+      ].join("\n");
+
+      // Create and download CSV file
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `analytics_${new Date().toISOString().split("T")[0]}.csv`;
+      link.click();
+    } catch (error) {
+      console.error("Failed to export analytics data:", error);
+      toast.error("Failed to export analytics data");
+    }
+  };
+
+  const MetricCard: React.FC<MetricCardProps> = ({ title, value, change, Icon }) => (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <div className="flex items-center space-x-2">
+          <Icon className="h-4 w-4 text-muted-foreground" />
+          <h3 className="text-sm font-medium">{title}</h3>
+        </div>
+        {change !== undefined && (
+          <div className={`flex items-center ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            {change >= 0 ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
+            <span className="text-xs">{Math.abs(change)}%</span>
+          </div>
+        )}
+      </CardHeader>
+      <CardContent>
+        <div className="text-2xl font-bold">{value}</div>
+      </CardContent>
+    </Card>
+  );
 
   return (
     <MainLayout>
-      <div className="space-y-4">
+      <div className="space-y-6">
         <div className="flex justify-between items-center">
-          <h1 className="text-3xl font-bold tracking-tight">Analytics</h1>
-          <div className="flex items-center gap-2">
-            <button className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Analytics</h1>
+            <p className="text-muted-foreground mt-2">
+              Monitor your application performance and usage metrics
+            </p>
+          </div>
+          <div className="flex items-center gap-4">
+            <Select value={selectedTimeRange} onValueChange={setSelectedTimeRange}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Select time range" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="24h">Last 24 hours</SelectItem>
+                <SelectItem value="7d">Last 7 days</SelectItem>
+                <SelectItem value="30d">Last 30 days</SelectItem>
+                <SelectItem value="90d">Last 90 days</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button onClick={handleExport}>
               <Download className="mr-2 h-4 w-4" />
               Export
-            </button>
+            </Button>
           </div>
         </div>
 
-        {error && (
-          <div className="rounded-lg border border-destructive bg-destructive/10 p-4 text-destructive">
-            Error loading analytics data: {error}
-          </div>
-        )}
-
-        {/* Analytics Cards */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-6">
-            <h3 className="text-sm font-medium text-muted-foreground">Error Rate</h3>
-            <p className="text-3xl font-bold">{metrics.errorRate}%</p>
-          </div>
-          <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-6">
-            <h3 className="text-sm font-medium text-muted-foreground">Events</h3>
-            <p className="text-3xl font-bold">{formatNumber(metrics.eventsCount)}</p>
-          </div>
-          <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-6">
-            <h3 className="text-sm font-medium text-muted-foreground">Active Users</h3>
-            <p className="text-3xl font-bold">{formatNumber(metrics.activeUsers)}</p>
-          </div>
-          <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-6">
-            <h3 className="text-sm font-medium text-muted-foreground">Avg, Response</h3>
-            <p className="text-3xl font-bold">{metrics.avgResponseTime} ms</p>
-          </div>
+          <MetricCard
+            title="Error Rate"
+            value={`${metrics.errorRate}%`}
+            change={metrics.errorRateChange}
+            Icon={Activity}
+          />
+          <MetricCard
+            title="Total Events"
+            value={formatNumber(metrics.eventsCount)}
+            change={metrics.eventsCountChange}
+            Icon={Filter}
+          />
+          <MetricCard
+            title="Active Users"
+            value={formatNumber(metrics.activeUsers)}
+            change={metrics.activeUsersChange}
+            Icon={Users}
+          />
+          <MetricCard
+            title="Avg. Response Time"
+            value={`${metrics.avgResponseTime} ms`}
+            change={metrics.avgResponseTimeChange}
+            Icon={Clock}
+          />
         </div>
 
-        {/* Error Rate Chart */}
-        <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-6">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-medium">Error Rate Over Time</h3>
-            <div className="flex gap-2">
-              <div className="relative">
-                <select
-                  className="rounded-md border border-input bg-background px-8 py-2 text-sm appearance-none"
-                  value={selectedService}
-                  onChange={(e) => setSelectedService(e.target.value)}
-                >
-                  <option value="all">All Services</option>
-                  <option value="frontend">Frontend</option>
-                  <option value="backend">Backend</option>
-                  <option value="database">Database</option>
-                </select>
-                <div className="absolute inset-y-0 left-2 flex items-center pointer-events-none">
-                  <span className="text-sm text-muted-foreground">Service</span>
-                </div>
-              </div>
-              <div className="relative">
-                <select
-                  className="rounded-md border border-input bg-background px-8 py-2 text-sm appearance-none"
-                  value={selectedEnvironment}
-                  onChange={(e) => setSelectedEnvironment(e.target.value)}
-                >
-                  <option value="all">All Environments</option>
-                  <option value="production">Production</option>
-                  <option value="staging">Staging</option>
-                  <option value="development">Development</option>
-                </select>
-                <div className="absolute inset-y-0 left-2 flex items-center pointer-events-none">
-                  <span className="text-sm text-muted-foreground">Environment</span>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div className="h-[200px] w-full">
-            {isLoading ? (
-              <div className="h-full w-full flex items-center justify-center">
-                <div className="text-muted-foreground text-sm">Loading chart data...</div>
-              </div>
-            ) : errorRateData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                  data={errorRateData}
-                  margin={{ top: 5, right: 5, left: 0, bottom: 5 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fontSize: 12 }}
-                    tickLine={false}
-                    axisLine={{ stroke: '#e5e7eb', strokeWidth: 1 }}
-                  />
-                  <YAxis
-                    tickFormatter={(value) => `${value}%`}
-                    tick={{ fontSize: 12 }}
-                    tickLine={false}
-                    axisLine={false}
-                    width={40}
-                  />
-                  <Tooltip
-                    formatter={(value) => [`${value}%`, 'Error Rate']}
-                    contentStyle={{
-                      backgroundColor: 'rgba(255, 255, 255, 0.9)',
-                      border: '1px solid #e5e7eb',
-                      borderRadius: '6px',
-                      boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
-                    }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="errorRate"
-                    stroke="#3b82f6"
-                    strokeWidth={2}
-                    dot={false}
-                    activeDot={{ r: 6, stroke: '#3b82f6', strokeWidth: 1, fill: '#fff' }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-full w-full flex items-center justify-center">
-                <div className="text-muted-foreground text-sm">No error rate data available</div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Data Tables */}
         <div className="grid gap-4 md:grid-cols-2">
-          {/* Error Rate by Service */}
-          <div className="rounded-lg border bg-card text-card-foreground shadow-sm overflow-hidden">
-            <div className="p-6">
-              <h3 className="text-lg font-medium">Error Rate by Service</h3>
-            </div>
-            <div className="border-t">
-              <div className="grid grid-cols-2 bg-muted/50 p-3">
-                <div className="text-sm font-medium">Service</div>
-                <div className="text-sm font-medium">Error Rate</div>
+          <Card className="col-span-2">
+            <CardHeader>
+              <CardTitle>Error Rate Over Time</CardTitle>
+              <CardDescription>Track error rate trends across your services</CardDescription>
+              <div className="flex gap-4">
+                <Select value={selectedService} onValueChange={setSelectedService}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Select service" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Services</SelectItem>
+                    <SelectItem value="frontend">Frontend</SelectItem>
+                    <SelectItem value="backend">Backend</SelectItem>
+                    <SelectItem value="database">Database</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={selectedEnvironment} onValueChange={setSelectedEnvironment}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Select environment" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Environments</SelectItem>
+                    <SelectItem value="production">Production</SelectItem>
+                    <SelectItem value="staging">Staging</SelectItem>
+                    <SelectItem value="development">Development</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-              {serviceErrorRates.map((item, index) => (
-                <div key={index} className="grid grid-cols-2 p-3 border-t">
-                  <div className="text-sm">{item.service}</div>
-                  <div className="text-sm">{item.errorRate}%</div>
-                </div>
-              ))}
-            </div>
-          </div>
+            </CardHeader>
+            <CardContent>
+              <div className="h-[300px] w-full">
+                {isLoading ? (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <Skeleton className="w-full h-full" />
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={errorRateData}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <XAxis
+                        dataKey="date"
+                        stroke="hsl(var(--muted-foreground))"
+                        fontSize={12}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <YAxis
+                        stroke="hsl(var(--muted-foreground))"
+                        fontSize={12}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={(value: number | string | undefined) => {
+                          if (typeof value === 'number') {
+                            return value.toFixed(0);
+                          }
+                          return '0';
+                        }}
+                        domain={[
+                          0,
+                          (dataMax: number | string | undefined) => {
+                            if (typeof dataMax === 'number') {
+                              return Math.ceil(dataMax * 1.1);
+                            }
+                            return 100; // Default maximum if value is undefined or not a number
+                          }
+                        ]}
+                      />
+                      <Tooltip
+                        content={({ active, payload }) => {
+                          if (active && payload && payload.length) {
+                            return (
+                              <div className="rounded-lg border bg-background p-2 shadow-sm">
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div className="flex flex-col">
+                                    <span className="text-[0.70rem] uppercase text-muted-foreground">
+                                      Date
+                                    </span>
+                                    <span className="font-bold text-muted-foreground">
+                                      {payload[0].payload.date}
+                                    </span>
+                                  </div>
+                                  <div className="flex flex-col">
+                                    <span className="text-[0.70rem] uppercase text-muted-foreground">
+                                      Error Rate
+                                    </span>
+                                    <span className="font-bold">
+                                      {payload[0].value}%
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }
+                          return null;
+                        }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="errorRate"
+                        stroke="hsl(var(--primary))"
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </CardContent>
+          </Card>
 
-          {/* Events by Environment */}
-          <div className="rounded-lg border bg-card text-card-foreground shadow-sm overflow-hidden">
-            <div className="p-6">
-              <h3 className="text-lg font-medium">Events by Environment</h3>
-            </div>
-            <div className="border-t">
-              <div className="grid grid-cols-2 bg-muted/50 p-3">
-                <div className="text-sm font-medium">Environment</div>
-                <div className="text-sm font-medium">Events</div>
+          <Card>
+            <CardHeader>
+              <CardTitle>Service Error Rates</CardTitle>
+              <CardDescription>Compare error rates across different services</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="h-[300px] w-full">
+                {isLoading ? (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <Skeleton className="w-full h-full" />
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={serviceErrorRates}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="service" />
+                      <YAxis
+                        tickFormatter={(value) => (typeof value === 'number' ? `${value.toFixed(1)}%` : '0%')}
+                        domain={[0, 'dataMax']}
+                      />
+                      <Tooltip />
+                      <Bar dataKey="errorRate" fill="#8884d8" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
               </div>
-              {environmentEvents.map((item, index) => (
-                <div key={index} className="grid grid-cols-2 p-3 border-t">
-                  <div className="text-sm">{item.environment}</div>
-                  <div className="text-sm">{formatNumber(item.events)}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+            </CardContent>
+          </Card>
 
-        {/* Performance Metrics */}
-        <div className="rounded-lg border bg-card text-card-foreground shadow-sm overflow-hidden">
-          <div className="p-6 flex justify-between items-center">
-            <h3 className="text-lg font-medium">Performance Metrics</h3>
-            <button className="text-sm text-primary hover:underline">Export</button>
-          </div>
-          <div className="border-t">
-            <div className="grid grid-cols-2 bg-muted/50 p-3">
-              <div className="text-sm font-medium">Service</div>
-              <div className="text-sm font-medium">Avg, Response Time</div>
-            </div>
-            {performanceMetrics.map((item, index) => (
-              <div key={index} className="grid grid-cols-2 p-3 border-t">
-                <div className="text-sm">{item.service}</div>
-                <div className="text-sm">{item.avgResponseTime} ms</div>
+          <Card>
+            <CardHeader>
+              <CardTitle>Environment Events</CardTitle>
+              <CardDescription>Event distribution across environments</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="h-[300px] w-full">
+                {isLoading ? (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <Skeleton className="w-full h-full" />
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={environmentEvents}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="environment" />
+                      <YAxis
+                        tickFormatter={(value) => (typeof value === 'number' ? value.toFixed(0) : '0')}
+                        domain={[0, 'dataMax']}
+                      />
+                      <Tooltip />
+                      <Bar dataKey="events" fill="#82ca9d" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
               </div>
-            ))}
-          </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </MainLayout>

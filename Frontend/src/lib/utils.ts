@@ -1,37 +1,32 @@
-import { type ClassValue, clsx } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { type ClassValue, clsx } from "clsx"
+import { twMerge } from "tailwind-merge"
 
 export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
+  return twMerge(clsx(inputs))
 }
 
 export function formatNumber(num: number): string {
   return new Intl.NumberFormat().format(num);
 }
 
-export function formatDate(date: Date): string {
-  return new Intl.DateTimeFormat('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: 'numeric',
-  }).format(date);
+export function formatDate(date: Date | string): string {
+  return new Date(date).toLocaleString();
 }
 
-export function getStatusColor(status: string): string {
+export function getStatusColor(status: string) {
   switch (status.toLowerCase()) {
-    case 'critical':
     case 'error':
-    case 'failed':
-      return 'destructive';
+    case 'critical':
+      return 'text-destructive';
     case 'warning':
-      return 'orange';
+    case 'warn':
+      return 'text-yellow-500';
+    case 'info':
+      return 'text-blue-500';
     case 'success':
-    case 'healthy':
-    case 'ok':
-      return 'green';
+    case 'debug':
+      return 'text-green-500';
     default:
-      return 'muted';
+      return 'text-muted-foreground';
   }
 }

@@ -2,10 +2,48 @@
 
 import MainLayout from "@/components/layouts/main-layout";
 import { ServiceModal, ServiceFormData } from "@/components/services/ServiceModal";
-import { Plus, Search, Filter, AlertTriangle, RefreshCw, X } from "lucide-react";
+import { Plus, Search, Filter, AlertTriangle, RefreshCw, X, Settings, Activity, Bell, Trash2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { api } from "@/lib/api";
 import { serviceService } from "@/services/serviceService";
+import { toast } from "sonner";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  CardFooter,
+} from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 // Define TypeScript interfaces for better type safety
 interface Service {
@@ -23,9 +61,10 @@ export default function ServicesPage() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [showRegisterModal, setShowRegisterModal] = useState(false);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [environmentFilter, setEnvironmentFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
+  const [environmentFilter, setEnvironmentFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [serviceToDelete, setServiceToDelete] = useState<Service | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Function to fetch services
   const fetchServices = async () => {
@@ -33,23 +72,18 @@ export default function ServicesPage() {
       setIsLoading(true);
       setError(null);
 
-      // Call the API to get services
       const response = await api.services.getAll();
-
-      // Check if response is an array, if not, use an empty array
       const responseData = Array.isArray(response) ? response : (response?.data || []);
 
-      // Transform the response to match our Service interface
       const fetchedServices: Service[] = responseData.map((service: any) => ({
         id: service._id || service.id,
         name: service.name,
         environment: service.environment,
         alertRules: service.alertRules,
         notificationChannels: service.notificationChannels,
-        status: service.status || "Active" // Default to Active if status is not provided
+        status: service.status || "Active"
       }));
 
-      // Apply search filter if any
       let filteredServices = fetchedServices;
       if (searchQuery) {
         const query = searchQuery.toLowerCase();
@@ -60,15 +94,13 @@ export default function ServicesPage() {
         );
       }
 
-      // Apply environment filter if any
-      if (environmentFilter) {
+      if (environmentFilter && environmentFilter !== 'all') {
         filteredServices = filteredServices.filter(
           (service) => service.environment === environmentFilter
         );
       }
 
-      // Apply status filter if any
-      if (statusFilter) {
+      if (statusFilter && statusFilter !== 'all') {
         filteredServices = filteredServices.filter(
           (service) => service.status === statusFilter
         );
@@ -77,7 +109,7 @@ export default function ServicesPage() {
       setServices(filteredServices);
     } catch (err: unknown) {
       console.error("Error fetching services:", err);
-      setError(err instanceof Error ? err.message : "An unknown error occurred");
+      toast.error(err instanceof Error ? err.message : "Failed to fetch services");
       setServices([]);
     } finally {
       setIsLoading(false);
@@ -91,8 +123,7 @@ export default function ServicesPage() {
   // Function to handle service registration
   const handleRegisterService = async (formData: ServiceFormData) => {
     try {
-      // Call the API to create a new service
-      const response = await api.services.create({
+      await api.services.create({
         name: formData.name,
         environment: formData.environment,
         alertRules: formData.alertRules,
@@ -100,218 +131,251 @@ export default function ServicesPage() {
         status: "Active"
       });
 
-      // Show success message
-      setSuccessMessage(`Service "${formData.name}" was registered successfully`);
-
-      // Clear success message after 5 seconds
-      setTimeout(() => {
-        setSuccessMessage(null);
-      }, 5000);
-
-      // Refresh the services list
+      toast.success(`Service "${formData.name}" was registered successfully`);
       fetchServices();
-
-      // Close the modal
       setShowRegisterModal(false);
 
       return Promise.resolve();
     } catch (err: unknown) {
       console.error("Error registering service:", err);
-      setError(err instanceof Error ? err.message : "An unknown error occurred");
+      toast.error(err instanceof Error ? err.message : "Failed to register service");
       return Promise.reject(err);
     }
   };
 
-  // Function to get status indicator
-  const getStatusIndicator = (status: string) => {
-    switch (status) {
-      case "Active":
-        return (
-          <div className="px-3 py-1 text-xs font-medium rounded-full bg-green-500/10 text-green-500">
-            Active
-          </div>
-        );
-      case "Pending":
-        return (
-          <div className="px-3 py-1 text-xs font-medium rounded-full bg-yellow-500/10 text-yellow-500">
-            Pending
-          </div>
-        );
-      case "Disabled":
-        return (
-          <div className="px-3 py-1 text-xs font-medium rounded-full bg-red-500/10 text-red-500">
-            Disabled
-          </div>
-        );
-      default:
-        return (
-          <div className="px-3 py-1 text-xs font-medium rounded-full bg-gray-500/10 text-gray-500">
-            Unknown
-          </div>
-        );
+  // Function to handle service deletion
+  const handleDeleteService = async () => {
+    if (!serviceToDelete) return;
+
+    setIsDeleting(true);
+    try {
+      await api.services.delete(serviceToDelete.id);
+      toast.success(`Service "${serviceToDelete.name}" was deleted successfully`);
+      setServiceToDelete(null);
+      fetchServices();
+    } catch (err) {
+      console.error("Error deleting service:", err);
+      toast.error("Failed to delete service");
+    } finally {
+      setIsDeleting(false);
     }
   };
 
-  // Handle search input change
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchQuery(e.target.value);
+  // Function to get status badge
+  const getStatusBadge = (status: Service["status"]) => {
+    const variants = {
+      Active: "success",
+      Pending: "warning",
+      Disabled: "destructive"
+    } as const;
+
+    return (
+      <Badge variant={variants[status]}>
+        {status}
+      </Badge>
+    );
   };
 
   return (
     <MainLayout>
-      <div className="space-y-4">
-        {/* Success message notification */}
-        {successMessage && (
-          <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative" role="alert">
-            <span className="block sm:inline">{successMessage}</span>
-            <button
-              onClick={() => setSuccessMessage(null)}
-              className="absolute top-0 bottom-0 right-0 px-4 py-3"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        )}
-
+      <div className="space-y-6">
         <div className="flex justify-between items-center">
-          <h1 className="text-3xl font-bold tracking-tight">Services</h1>
-          <button
-            onClick={() => setShowRegisterModal(true)}
-            className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2"
-          >
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Services</h1>
+            <p className="text-muted-foreground mt-2">
+              Manage and monitor your services
+            </p>
+          </div>
+          <Button onClick={() => setShowRegisterModal(true)}>
             <Plus className="mr-2 h-4 w-4" />
             New Service
-          </button>
+          </Button>
         </div>
 
-        {/* Filters and Search */}
-        <div className="grid gap-4 md:grid-cols-3">
-          <div className="relative">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <input
-              type="search"
-              placeholder="Search services..."
-              value={searchQuery}
-              onChange={handleSearchChange}
-              className="w-full rounded-md border border-input bg-background pl-8 pr-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </div>
-          <div>
-            <select
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              value={environmentFilter}
-              onChange={(e) => setEnvironmentFilter(e.target.value)}
-            >
-              <option value="">All Environments</option>
-              <option value="Production">Production</option>
-              <option value="Staging">Staging</option>
-              <option value="Development">Development</option>
-            </select>
-          </div>
-          <div>
-            <select
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
-              <option value="">All Statuses</option>
-              <option value="Active">Active</option>
-              <option value="Pending">Pending</option>
-              <option value="Disabled">Disabled</option>
-            </select>
-          </div>
-        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Filters</CardTitle>
+            <CardDescription>Filter services by environment, status, or search by name</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col md:flex-row gap-4">
+              <div className="flex-1">
+                <Select
+                  value={environmentFilter}
+                  onValueChange={setEnvironmentFilter}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Environment" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Environments</SelectItem>
+                    <SelectItem value="Production">Production</SelectItem>
+                    <SelectItem value="Staging">Staging</SelectItem>
+                    <SelectItem value="Development">Development</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex-1">
+                <Select
+                  value={statusFilter}
+                  onValueChange={setStatusFilter}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Statuses</SelectItem>
+                    <SelectItem value="Active">Active</SelectItem>
+                    <SelectItem value="Pending">Pending</SelectItem>
+                    <SelectItem value="Disabled">Disabled</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex-1">
+                <Input
+                  placeholder="Search services..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full"
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
-        {/* Services Table */}
-        <div className="border rounded-lg">
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {isLoading ? (
-            <div className="flex justify-center items-center h-32">
-              <div className="flex items-center gap-2">
-                <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" />
-                <p>Loading services...</p>
-              </div>
-            </div>
-          ) : error ? (
-            <div className="p-8 text-center">
-              <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-red-100 mb-4">
-                <AlertTriangle className="h-6 w-6 text-red-600" />
-              </div>
-              <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">Error Loading Services</h3>
-              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">{error}</p>
-              <div className="mt-4">
-                <button
-                  onClick={() => fetchServices()}
-                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-primary hover:bg-primary/90 focus:outline-none"
-                >
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                  Try Again
-                </button>
-              </div>
-            </div>
+            Array.from({ length: 6 }).map((_, i) => (
+              <Card key={i} className="animate-pulse">
+                <CardHeader className="space-y-2">
+                  <Skeleton className="h-4 w-3/4" />
+                  <Skeleton className="h-3 w-1/2" />
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <Skeleton className="h-3 w-full" />
+                  <Skeleton className="h-3 w-2/3" />
+                  <Skeleton className="h-3 w-1/2" />
+                </CardContent>
+              </Card>
+            ))
           ) : services.length === 0 ? (
-            <div className="p-8 text-center">
-              <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-gray-100 mb-4">
-                <AlertTriangle className="h-6 w-6 text-gray-600" />
+            <Card className="col-span-full p-6">
+              <div className="text-center">
+                <h3 className="text-lg font-semibold">No services found</h3>
+                <p className="text-muted-foreground mt-2">
+                  {error || "Add your first service to start monitoring"}
+                </p>
+                {!error && (
+                  <Button
+                    onClick={() => setShowRegisterModal(true)}
+                    className="mt-4"
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Add Service
+                  </Button>
+                )}
               </div>
-              <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">No Services Found</h3>
-              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                {searchQuery || environmentFilter || statusFilter
-                  ? "No services match your search criteria."
-                  : "You haven't registered any services yet."}
-              </p>
-              <div className="mt-4">
-                <button
-                  onClick={() => setShowRegisterModal(true)}
-                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-primary hover:bg-primary/90 focus:outline-none"
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Your First Service
-                </button>
-              </div>
-            </div>
+            </Card>
           ) : (
-            <div className="relative overflow-x-auto">
-              <table className="w-full text-sm text-left rtl:text-right">
-                <thead className="text-xs bg-muted/50">
-                  <tr>
-                    <th scope="col" className="px-6 py-3">Name</th>
-                    <th scope="col" className="px-6 py-3">Environment</th>
-                    <th scope="col" className="px-6 py-3">Alert Rules</th>
-                    <th scope="col" className="px-6 py-3">Notification Channels</th>
-                    <th scope="col" className="px-6 py-3">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {services.map((service) => (
-                    <tr key={service.id} className="bg-card border-b hover:bg-muted/30">
-                      <td className="px-6 py-4 font-medium">{service.name}</td>
-                      <td className="px-6 py-4">
-                        <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-500/10 text-blue-500">
-                          {service.environment}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4">{service.alertRules}</td>
-                      <td className="px-6 py-4">
-                        {service.notificationChannels.join(", ")}
-                      </td>
-                      <td className="px-6 py-4">{getStatusIndicator(service.status)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            services.map((service) => (
+              <Card key={service.id} className="relative group">
+                <CardHeader>
+                  <div className="flex items-start justify-between">
+                    <div className="space-y-1">
+                      <CardTitle className="flex items-center gap-2">
+                        {service.name}
+                        {getStatusBadge(service.status)}
+                      </CardTitle>
+                      <CardDescription>
+                        Environment: {service.environment}
+                      </CardDescription>
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon">
+                          <Settings className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem>
+                          <Activity className="mr-2 h-4 w-4" />
+                          View Metrics
+                        </DropdownMenuItem>
+                        <DropdownMenuItem>
+                          <Bell className="mr-2 h-4 w-4" />
+                          Configure Alerts
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="text-destructive"
+                          onClick={() => setServiceToDelete(service)}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Delete Service
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    <div>
+                      <h4 className="text-sm font-medium mb-2">Alert Rules</h4>
+                      <p className="text-sm text-muted-foreground">
+                        {service.alertRules || "No alert rules configured"}
+                      </p>
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-medium mb-2">Notification Channels</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {service.notificationChannels.length > 0 ? (
+                          service.notificationChannels.map((channel, index) => (
+                            <Badge key={index} variant="outline">
+                              {channel}
+                            </Badge>
+                          ))
+                        ) : (
+                          <p className="text-sm text-muted-foreground">
+                            No notification channels configured
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))
           )}
         </div>
       </div>
 
-      {/* Service Registration Modal */}
-      {showRegisterModal && (
-        <ServiceModal
-          isOpen={showRegisterModal}
-          onClose={() => setShowRegisterModal(false)}
-          onSubmit={handleRegisterService}
-        />
-      )}
+      <ServiceModal
+        isOpen={showRegisterModal}
+        onClose={() => setShowRegisterModal(false)}
+        onSubmit={handleRegisterService}
+      />
+
+      <AlertDialog open={!!serviceToDelete} onOpenChange={() => setServiceToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Service</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete {serviceToDelete?.name}? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteService}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={isDeleting}
+            >
+              {isDeleting ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </MainLayout>
   );
 }

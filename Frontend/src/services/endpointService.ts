@@ -1,10 +1,17 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
 
 // Helper function to handle API responses
 async function handleResponse(response: Response) {
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(error || 'An error occurred while fetching data');
+    let errorMessage = 'An error occurred while fetching data';
+    try {
+      const errorData = await response.json();
+      errorMessage = errorData.detail || errorMessage;
+    } catch (e) {
+      // JSON parsing failed, use status text
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
   }
   return response.json();
 }
@@ -97,12 +104,41 @@ export const endpointService = {
 
   pingEndpoint: async (id: string, url: string) => {
     try {
+      // Ensure we have a valid ID
+      if (!id) {
+        throw new Error("Endpoint ID is required");
+      }
+
+      // Make the API call
       const response = await fetch(`${API_URL}/api/endpoints/${id}/ping`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
+        body: JSON.stringify({ url }) // Include the URL in the request body
       });
+
+      // Handle non-200 responses
+      if (!response.ok) {
+        let errorMessage = "Failed to ping endpoint";
+
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.detail || errorMessage;
+        } catch (e) {
+          // JSON parsing failed, use status text
+          errorMessage = response.statusText || errorMessage;
+        }
+
+        if (response.status === 404) {
+          throw new Error("Error: Endpoint not found. Please check if the endpoint still exists.");
+        } else if (response.status === 500) {
+          throw new Error("Server error while pinging endpoint. Please try again later.");
+        } else {
+          throw new Error(errorMessage);
+        }
+      }
+
       return handleResponse(response);
     } catch (error) {
       console.error(`Error pinging endpoint ${id}:`, error);
