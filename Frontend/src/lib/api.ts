@@ -76,6 +76,45 @@ export const api = {
     delete: endpointService.deleteEndpoint,
   },
 
+  // Services endpoints
+  services: {
+    getAll: async (params?: Record<string, any>) => {
+      const queryString = params ? `?${new URLSearchParams(params).toString()}` : '';
+      const response = await fetch(`${API_BASE_URL}/services${queryString}`);
+      return handleResponse(response);
+    },
+    getById: async (id: string) => {
+      const response = await fetch(`${API_BASE_URL}/services/${id}`);
+      return handleResponse(response);
+    },
+    create: async (serviceData: any) => {
+      const response = await fetch(`${API_BASE_URL}/services`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(serviceData),
+      });
+      return handleResponse(response);
+    },
+    update: async (id: string, serviceData: any) => {
+      const response = await fetch(`${API_BASE_URL}/services/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(serviceData),
+      });
+      return handleResponse(response);
+    },
+    delete: async (id: string) => {
+      const response = await fetch(`${API_BASE_URL}/services/${id}`, {
+        method: 'DELETE',
+      });
+      return handleResponse(response);
+    },
+  },
+
   // Health check
   health: async () => {
     const response = await fetch(`${API_BASE_URL}/health`);
