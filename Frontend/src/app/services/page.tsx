@@ -53,6 +53,15 @@ interface Service {
   alertRules: string;
   notificationChannels: string[];
   status: "Active" | "Pending" | "Disabled";
+  endpoint?: {
+    url: string;
+    method: string;
+    headers: Record<string, string>;
+    timeout: number;
+    lastChecked?: Date;
+    healthStatus?: string;
+  };
+  metrics?: any;
 }
 
 export default function ServicesPage() {
@@ -65,6 +74,8 @@ export default function ServicesPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [serviceToDelete, setServiceToDelete] = useState<Service | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isAutoConfiguring, setIsAutoConfiguring] = useState(false);
+  const [endpoints, setEndpoints] = useState([]);
 
   // Function to fetch services
   const fetchServices = async () => {
@@ -80,8 +91,17 @@ export default function ServicesPage() {
         name: service.name,
         environment: service.environment,
         alertRules: service.alertRules,
-        notificationChannels: service.notificationChannels,
-        status: service.status || "Active"
+        notificationChannels: service.notificationChannels || [],
+        status: service.status || "Active",
+        endpoint: service.endpoint ? {
+          url: service.endpoint.url,
+          method: service.endpoint.method,
+          headers: service.endpoint.headers || {},
+          timeout: service.endpoint.timeout || 5000,
+          lastChecked: service.endpoint.lastChecked,
+          healthStatus: service.endpoint.healthStatus
+        } : undefined,
+        metrics: service.metrics
       }));
 
       let filteredServices = fetchedServices;
@@ -123,14 +143,21 @@ export default function ServicesPage() {
   // Function to handle service registration
   const handleRegisterService = async (formData: ServiceFormData) => {
     try {
-      await api.services.create({
+      const serviceData = {
         name: formData.name,
         environment: formData.environment,
         alertRules: formData.alertRules,
         notificationChannels: formData.notificationChannels,
-        status: "Active"
-      });
+        status: "Active",
+        endpoint: formData.endpoint && {
+          url: formData.endpoint.url,
+          method: formData.endpoint.method,
+          headers: formData.endpoint.headers || {},
+          timeout: formData.endpoint.timeout || 5000
+        }
+      };
 
+      await api.services.create(serviceData);
       toast.success(`Service "${formData.name}" was registered successfully`);
       fetchServices();
       setShowRegisterModal(false);
@@ -140,6 +167,78 @@ export default function ServicesPage() {
       console.error("Error registering service:", err);
       toast.error(err instanceof Error ? err.message : "Failed to register service");
       return Promise.reject(err);
+    }
+  };
+
+  // Function to fetch endpoints and auto-configure services
+  const autoConfigureServices = async () => {
+    try {
+      setIsAutoConfiguring(true);
+
+      // Fetch all endpoints
+      const endpointsResponse = await api.endpoints.getAll();
+      console.log('Endpoints response:', endpointsResponse); // Debug log
+
+      const fetchedEndpoints = Array.isArray(endpointsResponse) ? endpointsResponse :
+                             endpointsResponse?.data || endpointsResponse?.endpoints || [];
+      setEndpoints(fetchedEndpoints);
+
+      // Get existing services
+      const existingServices = await api.services.getAll();
+      const existingServiceMap = new Map(
+        existingServices.map((s: Service) => [s.name, s])
+      );
+
+      // Register or update services from endpoints
+      for (const endpoint of fetchedEndpoints) {
+        console.log('Processing endpoint:', endpoint); // Debug log
+
+        const serviceData = {
+          name: endpoint.name,
+          environment: endpoint.environment || "Production",
+          alertRules: endpoint.alertRules || "Default",
+          notificationChannels: endpoint.notificationChannels || ["email"],
+          status: "Active",
+          endpoint: {
+            url: endpoint.url,
+            method: endpoint.method || "GET",
+            headers: endpoint.headers || {},
+            timeout: endpoint.timeout || 5000,
+          }
+        };
+
+        const existingService = existingServiceMap.get(endpoint.name);
+
+        try {
+          if (existingService) {
+            // Update existing service if environment or other properties have changed
+            if (existingService.environment !== endpoint.environment ||
+                existingService.endpoint?.url !== endpoint.url ||
+                existingService.endpoint?.method !== endpoint.method) {
+
+              console.log('Updating service:', endpoint.name, 'with new data:', serviceData); // Debug log
+              await api.services.update(existingService.id, serviceData);
+              toast.success(`Service "${endpoint.name}" was updated with new configuration`);
+            }
+          } else {
+            // Create new service
+            console.log('Creating new service:', serviceData); // Debug log
+            await api.services.create(serviceData);
+            toast.success(`Service "${endpoint.name}" was automatically configured`);
+          }
+        } catch (err) {
+          console.error(`Error configuring service for endpoint ${endpoint.name}:`, err);
+          toast.error(`Failed to configure service for endpoint ${endpoint.name}`);
+        }
+      }
+
+      // Refresh services list
+      fetchServices();
+    } catch (err) {
+      console.error("Error in auto-configuration:", err);
+      toast.error("Failed to auto-configure services from endpoints");
+    } finally {
+      setIsAutoConfiguring(false);
     }
   };
 
@@ -330,8 +429,8 @@ export default function ServicesPage() {
                       <h4 className="text-sm font-medium mb-2">Notification Channels</h4>
                       <div className="flex flex-wrap gap-2">
                         {service.notificationChannels.length > 0 ? (
-                          service.notificationChannels.map((channel, index) => (
-                            <Badge key={index} variant="outline">
+                          service.notificationChannels.map((channel) => (
+                            <Badge key={channel} variant="outline">
                               {channel}
                             </Badge>
                           ))

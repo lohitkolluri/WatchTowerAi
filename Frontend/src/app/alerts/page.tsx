@@ -1,17 +1,45 @@
 "use client";
 
 import MainLayout from "@/components/layouts/main-layout";
-import { Search, Filter, Bell, AlertCircle, Clock, X } from "lucide-react";
+import { Search, Filter, Bell, AlertCircle, Clock, X, CheckCircle, AlertTriangle, Info, ArrowUpDown, RefreshCw } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { api } from "@/lib/api";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 interface SMTPConfig {
   host: string;
@@ -48,27 +76,106 @@ interface FormattedAlert {
   remediation?: string;
 }
 
+interface AlertFilters {
+  search: string;
+  service: string;
+  environment: string;
+  severity: string;
+  status: string;
+}
+
+const SEVERITY_ICONS = {
+  critical: { icon: AlertCircle, color: "text-destructive" },
+  error: { icon: AlertCircle, color: "text-destructive" },
+  warning: { icon: AlertTriangle, color: "text-yellow-500" },
+  info: { icon: Info, color: "text-blue-500" },
+};
+
+const STATUS_BADGES = {
+  active: { label: "Active", color: "bg-destructive text-destructive-foreground" },
+  acknowledged: { label: "Acknowledged", color: "bg-yellow-500 text-white" },
+  resolved: { label: "Resolved", color: "bg-green-500 text-white" },
+  default: { label: "Unknown", color: "bg-muted text-muted-foreground" }
+};
+
 export default function AlertsPage() {
   const [isConfigOpen, setIsConfigOpen] = useState(false);
+  const [selectedAlert, setSelectedAlert] = useState<FormattedAlert | null>(null);
   const [smtpConfig, setSmtpConfig] = useState<SMTPConfig>({
-    host: '',
+    host: "",
     port: 587,
-    username: '',
-    password: '',
-    from_email: '',
+    username: "",
+    password: "",
+    from_email: "",
     use_tls: true,
   });
   const [isSaving, setIsSaving] = useState(false);
   const [alerts, setAlerts] = useState<FormattedAlert[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedService, setSelectedService] = useState<string>('');
-  const [selectedEnvironment, setSelectedEnvironment] = useState<string>('');
-  const [selectedSeverity, setSelectedSeverity] = useState<string>('');
-  const [selectedStatus, setSelectedStatus] = useState<string>('');
-  const [error, setError] = useState(null);
+  const [isAutoRefresh, setIsAutoRefresh] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [services, setServices] = useState<string[]>([]);
+  const [environments, setEnvironments] = useState<string[]>([]);
+  const [filters, setFilters] = useState<AlertFilters>({
+    search: "",
+    service: "all",
+    environment: "all",
+    severity: "all",
+    status: "all",
+  });
 
-  // Load existing SMTP configuration
+  const fetchAlerts = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const alertsData = await api.alerts.getAll();
+      const formattedAlerts = alertsData.map((alert: Alert): FormattedAlert => ({
+        id: alert._id,
+        title: alert.message,
+        service: alert.service_name,
+        environment: alert.environment,
+        severity: alert.level,
+        status: alert.status,
+        timestamp: new Date(alert.timestamp),
+        acknowledged: alert.acknowledged,
+        description: alert.description,
+        remediation: alert.remediation,
+      }));
+
+      setAlerts(formattedAlerts);
+
+      // Extract unique services and environments with proper typing
+      const uniqueServices = [...new Set(formattedAlerts.map((alert: FormattedAlert) => alert.service))] as string[];
+      const uniqueEnvironments = [...new Set(formattedAlerts.map((alert: FormattedAlert) => alert.environment))] as string[];
+      setServices(uniqueServices);
+      setEnvironments(uniqueEnvironments);
+
+      setError(null);
+    } catch (err) {
+      console.error("Failed to fetch alerts:", err);
+      setError(err instanceof Error ? err.message : "Failed to fetch alerts");
+      toast.error("Failed to fetch alerts");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchAlerts();
+
+    // Set up auto-refresh
+    let intervalId: NodeJS.Timeout;
+    if (isAutoRefresh) {
+      intervalId = setInterval(fetchAlerts, 30000); // Refresh every 30 seconds
+    }
+
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [fetchAlerts, isAutoRefresh]);
+
+  // Load SMTP configuration
   useEffect(() => {
     async function loadSMTPConfig() {
       try {
@@ -81,13 +188,13 @@ export default function AlertsPage() {
     loadSMTPConfig();
   }, []);
 
-  async function handleSMTPSubmit(e: React.FormEvent) {
+  const handleSMTPSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
     try {
       const configToSubmit = {
         ...smtpConfig,
-        port: parseInt(smtpConfig.port.toString(), 10), // Ensure port is a number
+        port: parseInt(smtpConfig.port.toString(), 10),
       };
       await api.settings.updateSMTP(configToSubmit);
       toast.success("SMTP configuration updated successfully");
@@ -98,139 +205,321 @@ export default function AlertsPage() {
     } finally {
       setIsSaving(false);
     }
-  }
-
-  const handlePortChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = parseInt(e.target.value, 10);
-    setSmtpConfig(prev => ({
-      ...prev,
-      port: isNaN(value) ? 587 : value // Use default port 587 if invalid
-    }));
   };
 
-  useEffect(() => {
-    async function fetchAlerts() {
-      setIsLoading(true);
-      try {
-        const alertsData = await api.alerts.getAll();
-
-        // Transform backend data to match frontend structure
-        const formattedAlerts = alertsData.map((alert: Alert): FormattedAlert => ({
-          id: alert._id,
-          title: alert.message,
-          service: alert.service_name,
-          environment: alert.environment,
-          severity: alert.level,
-          status: alert.status,
-          timestamp: new Date(alert.timestamp),
-          acknowledged: alert.acknowledged,
-          description: alert.description,
-          remediation: alert.remediation
-        }));
-
-        setAlerts(formattedAlerts);
+  const handleAcknowledge = async (alertId: string) => {
+    try {
+      await api.alerts.acknowledge(alertId);
+      toast.success("Alert acknowledged");
+      fetchAlerts(); // Refresh alerts
       } catch (error) {
-        console.error("Failed to fetch alerts:", error);
-        toast.error("Failed to fetch alerts");
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
-    fetchAlerts();
-  }, []);
-
-  // Function to get severity badge color
-  const getSeverityColor = (severity: string | undefined | null) => {
-    if (!severity) {
-      return "bg-muted text-muted-foreground";
-    }
-
-    switch (severity.toLowerCase()) {
-      case "critical":
-      case "error":
-      case "fatal":
-        return "bg-destructive text-destructive-foreground";
-      case "warning":
-      case "warn":
-        return "bg-yellow-500 text-white";
-      case "info":
-        return "bg-blue-500 text-white";
-      default:
-        return "bg-muted text-muted-foreground";
+      console.error("Failed to acknowledge alert:", error);
+      toast.error("Failed to acknowledge alert");
     }
   };
 
-  // Function to get status badge color
-  const getStatusColor = (status: string | undefined | null) => {
-    if (!status) {
-      return "bg-muted text-muted-foreground";
-    }
+  const getSeverityIcon = (severity: string) => {
+    const config = SEVERITY_ICONS[severity.toLowerCase() as keyof typeof SEVERITY_ICONS];
+    if (!config) return null;
 
-    switch (status.toLowerCase()) {
-      case "active":
-        return "bg-destructive text-destructive-foreground";
-      case "acknowledged":
-        return "bg-yellow-500 text-white";
-      case "resolved":
-        return "bg-green-500 text-white";
-      default:
-        return "bg-muted text-muted-foreground";
-    }
+    const Icon = config.icon;
+    return <Icon className={`h-4 w-4 ${config.color}`} />;
   };
+
+  const filteredAlerts = alerts.filter(alert => {
+    const matchesSearch = filters.search
+      ? alert.title.toLowerCase().includes(filters.search.toLowerCase()) ||
+        alert.service.toLowerCase().includes(filters.search.toLowerCase()) ||
+        alert.environment.toLowerCase().includes(filters.search.toLowerCase())
+      : true;
+
+    const matchesService = filters.service === "all" || alert.service === filters.service;
+    const matchesEnvironment = filters.environment === "all" || alert.environment === filters.environment;
+    const matchesSeverity = filters.severity === "all" || alert.severity.toLowerCase() === filters.severity.toLowerCase();
+    const matchesStatus = filters.status === "all" || alert.status.toLowerCase() === filters.status.toLowerCase();
+
+    return matchesSearch && matchesService && matchesEnvironment && matchesSeverity && matchesStatus;
+  });
 
   return (
     <MainLayout>
-      <div className="space-y-4">
+      <div className="space-y-6">
         <div className="flex justify-between items-center">
+          <div>
           <h1 className="text-3xl font-bold tracking-tight">Alerts</h1>
+            <p className="text-muted-foreground mt-1">Monitor and manage system alerts</p>
+          </div>
+          <div className="flex items-center gap-4">
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
           <div className="flex items-center gap-2">
-            <button
+                    <Label htmlFor="auto-refresh">Auto Refresh</Label>
+                    <Switch
+                      id="auto-refresh"
+                      checked={isAutoRefresh}
+                      onCheckedChange={setIsAutoRefresh}
+                    />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Automatically refresh alerts every 30 seconds</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <Button
+              variant="outline"
               onClick={() => setIsConfigOpen(true)}
-              className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2"
             >
               <Bell className="mr-2 h-4 w-4" />
               Configure Notifications
-            </button>
+            </Button>
+            <Button
+              variant="outline"
+              onClick={fetchAlerts}
+              disabled={isLoading}
+            >
+              <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
           </div>
         </div>
 
-        {/* Notification Configuration Dialog */}
+        {/* Filters */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Filters</CardTitle>
+            <CardDescription>Filter alerts by various criteria</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+              <div className="space-y-2">
+                <Label>Search</Label>
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    type="search"
+                    placeholder="Search alerts..."
+                    className="pl-8"
+                    value={filters.search}
+                    onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Service</Label>
+                <Select
+                  value={filters.service}
+                  onValueChange={(value) => setFilters({ ...filters, service: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select service" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Services</SelectItem>
+                    {services.map((service) => (
+                      <SelectItem key={service} value={service}>
+                        {service}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Environment</Label>
+                <Select
+                  value={filters.environment}
+                  onValueChange={(value) => setFilters({ ...filters, environment: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select environment" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Environments</SelectItem>
+                    {environments.map((env) => (
+                      <SelectItem key={env} value={env}>
+                        {env}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <Select
+                  value={filters.status}
+                  onValueChange={(value) => setFilters({ ...filters, status: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Statuses</SelectItem>
+                    {Object.entries(STATUS_BADGES).map(([status, config]) => (
+                      <SelectItem key={status} value={status}>
+                        {config.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Alerts Table */}
+        {error ? (
+          <div className="rounded-lg border border-destructive bg-destructive/10 p-4 text-destructive">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5" />
+              <p>{error}</p>
+            </div>
+          </div>
+        ) : (
+          <Card>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Severity</TableHead>
+                  <TableHead>Alert</TableHead>
+                  <TableHead>Service</TableHead>
+                  <TableHead>Environment</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Time</TableHead>
+                  <TableHead>Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8">
+                      <div className="flex justify-center items-center gap-2">
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                        Loading alerts...
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ) : filteredAlerts.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8">
+                      <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                        <Bell className="h-8 w-8" />
+                        <p>No alerts found</p>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filteredAlerts.map((alert) => (
+                    <TableRow key={alert.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          {getSeverityIcon(alert.severity)}
+                          <span className="capitalize text-sm">{alert.severity}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          className="p-0 h-auto font-normal text-left hover:underline"
+                          onClick={() => setSelectedAlert(alert)}
+                        >
+                          {alert.title}
+                        </Button>
+                      </TableCell>
+                      <TableCell>{alert.service}</TableCell>
+                      <TableCell>{alert.environment}</TableCell>
+                      <TableCell>
+                        <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          STATUS_BADGES[
+                            (alert.status?.toLowerCase() || 'default') as keyof typeof STATUS_BADGES
+                          ]?.color || STATUS_BADGES.default.color
+                        }`}>
+                          {STATUS_BADGES[
+                            (alert.status?.toLowerCase() || 'default') as keyof typeof STATUS_BADGES
+                          ]?.label || alert.status || 'Unknown'}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger>
+                              <time dateTime={alert.timestamp.toISOString()} className="text-sm text-muted-foreground">
+                                {formatDate(alert.timestamp)}
+                              </time>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>{alert.timestamp.toLocaleString()}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </TableCell>
+                      <TableCell>
+                        {!alert.acknowledged && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleAcknowledge(alert.id)}
+                          >
+                            <CheckCircle className="mr-2 h-4 w-4" />
+                            Acknowledge
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </Card>
+        )}
+
+        {/* SMTP Configuration Dialog */}
         <Dialog open={isConfigOpen} onOpenChange={setIsConfigOpen}>
           <DialogContent className="sm:max-w-[600px]">
             <DialogHeader>
-              <DialogTitle>Configure Notifications</DialogTitle>
+              <DialogTitle>Email Notification Settings</DialogTitle>
               <DialogDescription>
-                Set up SMTP settings for email notifications. These settings will be used to send alert notifications.
+                Configure SMTP settings for email notifications
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSMTPSubmit} className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-4 py-4">
                 <div className="space-y-2">
                   <Label htmlFor="host">SMTP Host</Label>
                   <Input
                     id="host"
-                    placeholder="smtp.example.com"
                     value={smtpConfig.host}
                     onChange={(e) => setSmtpConfig({ ...smtpConfig, host: e.target.value })}
+                    placeholder="smtp.example.com"
                   />
                 </div>
+                <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="port">SMTP Port</Label>
+                    <Label htmlFor="port">Port</Label>
                   <Input
                     id="port"
                     type="number"
                     value={smtpConfig.port}
-                    onChange={handlePortChange}
-                  />
+                      onChange={(e) => setSmtpConfig({ ...smtpConfig, port: parseInt(e.target.value) })}
+                      placeholder="587"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="use_tls">Use TLS</Label>
+                    <Switch
+                      id="use_tls"
+                      checked={smtpConfig.use_tls}
+                      onCheckedChange={(checked) => setSmtpConfig({ ...smtpConfig, use_tls: checked })}
+                    />
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="username">Username</Label>
                   <Input
                     id="username"
-                    placeholder="username@example.com"
                     value={smtpConfig.username}
                     onChange={(e) => setSmtpConfig({ ...smtpConfig, username: e.target.value })}
+                    placeholder="username@example.com"
                   />
                 </div>
                 <div className="space-y-2">
@@ -238,192 +527,127 @@ export default function AlertsPage() {
                   <Input
                     id="password"
                     type="password"
-                    placeholder="••••••••"
                     value={smtpConfig.password}
                     onChange={(e) => setSmtpConfig({ ...smtpConfig, password: e.target.value })}
+                    placeholder="••••••••"
                   />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="from_email">From Email</Label>
                   <Input
                     id="from_email"
-                    placeholder="notifications@example.com"
+                    type="email"
                     value={smtpConfig.from_email}
                     onChange={(e) => setSmtpConfig({ ...smtpConfig, from_email: e.target.value })}
+                    placeholder="alerts@example.com"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="use_tls" className="block mb-2">Use TLS</Label>
-                  <div className="flex items-center space-x-2">
-                    <Switch
-                      id="use_tls"
-                      checked={smtpConfig.use_tls}
-                      onCheckedChange={(checked) => setSmtpConfig({ ...smtpConfig, use_tls: checked })}
-                    />
-                    <Label htmlFor="use_tls">Enable TLS encryption</Label>
-                  </div>
-                </div>
               </div>
-
-              <div className="flex justify-end space-x-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setIsConfigOpen(false)}
-                >
-                  Cancel
-                </Button>
+              <DialogFooter>
                 <Button type="submit" disabled={isSaving}>
-                  {isSaving ? "Saving..." : "Save Changes"}
+                  {isSaving ? (
+                    <>
+                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    "Save Changes"
+                  )}
                 </Button>
-              </div>
+              </DialogFooter>
             </form>
           </DialogContent>
         </Dialog>
 
-        {/* Filters and Search */}
-        <div className="grid gap-4 md:grid-cols-4">
-          <div className="relative col-span-2">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <input
-              type="search"
-              placeholder="Search alerts..."
-              className="w-full rounded-md border border-input bg-background pl-8 pr-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
+        {/* Alert Details Dialog */}
+        <Dialog open={!!selectedAlert} onOpenChange={() => setSelectedAlert(null)}>
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>Alert Details</DialogTitle>
+            </DialogHeader>
+            {selectedAlert && (
+              <div className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <Label>Severity</Label>
+                    <div className="flex items-center gap-2 mt-1">
+                      {getSeverityIcon(selectedAlert.severity)}
+                      <span className="capitalize">{selectedAlert.severity}</span>
+                    </div>
           </div>
           <div>
-            <select className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              <option value="">All Services</option>
-              <option value="auth">Auth</option>
-              <option value="api">API</option>
-              <option value="billing">Billing</option>
-              <option value="frontend">Frontend</option>
-              <option value="backend">Backend</option>
-              <option value="gateway">Gateway</option>
-            </select>
+                    <Label>Status</Label>
+                    <div className="mt-1">
+                      <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        STATUS_BADGES[
+                          (selectedAlert.status?.toLowerCase() || 'default') as keyof typeof STATUS_BADGES
+                        ]?.color || STATUS_BADGES.default.color
+                      }`}>
+                        {STATUS_BADGES[
+                          (selectedAlert.status?.toLowerCase() || 'default') as keyof typeof STATUS_BADGES
+                        ]?.label || selectedAlert.status || 'Unknown'}
           </div>
-          <div>
-            <select className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              <option value="">All Statuses</option>
-              <option value="active">Active</option>
-              <option value="acknowledged">Acknowledged</option>
-              <option value="resolved">Resolved</option>
-            </select>
           </div>
         </div>
-
-        {/* Advanced Filters (Collapsed by default) */}
-        <div className="rounded-md border border-border p-4">
-          <button className="flex items-center text-sm font-medium">
-            <Filter className="mr-2 h-4 w-4" />
-            Advanced Filters
-          </button>
-          <div className="hidden mt-4 grid gap-4 md:grid-cols-3">
             <div>
-              <label className="text-sm font-medium">Environment</label>
-              <select className="w-full mt-1 rounded-md border border-input bg-background px-3 py-2 text-sm">
-                <option value="">All Environments</option>
-                <option value="production">Production</option>
-                <option value="staging">Staging</option>
-                <option value="development">Development</option>
-              </select>
+                    <Label>Service</Label>
+                    <div className="mt-1">{selectedAlert.service}</div>
             </div>
             <div>
-              <label className="text-sm font-medium">Severity</label>
-              <select className="w-full mt-1 rounded-md border border-input bg-background px-3 py-2 text-sm">
-                <option value="">All Severities</option>
-                <option value="critical">Critical</option>
-                <option value="warning">Warning</option>
-                <option value="info">Info</option>
-              </select>
+                    <Label>Environment</Label>
+                    <div className="mt-1">{selectedAlert.environment}</div>
             </div>
             <div>
-              <label className="text-sm font-medium">Time Range</label>
-              <div className="flex items-center mt-1 gap-2">
-                <div className="relative flex-1">
-                  <Clock className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <input
-                    type="datetime-local"
-                    className="w-full rounded-md border border-input bg-background pl-8 pr-3 py-2 text-sm"
-                  />
-                </div>
-                <span>to</span>
-                <div className="relative flex-1">
-                  <Clock className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <input
-                    type="datetime-local"
-                    className="w-full rounded-md border border-input bg-background pl-8 pr-3 py-2 text-sm"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {error && (
-          <div className="rounded-lg border border-destructive bg-destructive/10 p-4 text-destructive">
-            Error loading alerts: {error}
-          </div>
-        )}
-
-        {/* Alerts List */}
-        {isLoading ? (
-          <div className="flex justify-center p-8">
-            <div className="text-lg text-muted-foreground">Loading alerts...</div>
-          </div>
-        ) : alerts.length === 0 ? (
-          <div className="flex justify-center p-8">
-            <div className="text-lg text-muted-foreground">No alerts found</div>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {alerts.map((alert) => (
-              <div
-                key={alert.id}
-                className="rounded-lg border bg-card text-card-foreground shadow-sm overflow-hidden"
-              >
-              <div className="p-6">
-                <div className="flex items-start justify-between">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <AlertCircle
-                        className={`h-5 w-5 ${alert.severity === "critical" ? "text-destructive" : alert.severity === "warning" ? "text-yellow-500" : "text-blue-500"}`}
-                      />
-                      <h3 className="text-lg font-semibold">{alert.title}</h3>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <span>{alert.service}</span>
-                      <span>•</span>
-                      <span>{alert.environment}</span>
-                      <span>•</span>
-                      <span>{formatDate(alert.timestamp)}</span>
+                    <Label>Time</Label>
+                    <div className="mt-1 font-mono text-sm">
+                      {selectedAlert.timestamp.toLocaleString()}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${getSeverityColor(alert.severity)}`}>
-                      {alert.severity}
-                    </span>
-                    <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${getStatusColor(alert.status)}`}>
-                      {alert.status}
-                    </span>
+                  <div>
+                    <Label>Acknowledged</Label>
+                    <div className="mt-1">
+                      {selectedAlert.acknowledged ? (
+                        <span className="text-green-500">Yes</span>
+                      ) : (
+                        <span className="text-yellow-500">No</span>
+                      )}
+                    </div>
                   </div>
                 </div>
-                <div className="border-t pt-4 mt-4">
-                  <p className="text-sm">{alert.description}</p>
-                  {alert.remediation && (
-                    <div className="mt-2">
-                      <h4 className="text-sm font-medium">Remediation:</h4>
-                      <div className="text-sm text-muted-foreground markdown-content">
-                        <ReactMarkdown>{alert.remediation}</ReactMarkdown>
+                <div>
+                  <Label>Message</Label>
+                  <div className="mt-1 p-4 rounded-lg bg-muted">
+                    {selectedAlert.title}
+                  </div>
+                </div>
+                {selectedAlert.description && (
+                  <div>
+                    <Label>Description</Label>
+                    <div className="mt-1 p-4 rounded-lg bg-muted prose prose-sm max-w-none">
+                      <ReactMarkdown>{selectedAlert.description}</ReactMarkdown>
                       </div>
                     </div>
                   )}
+                {selectedAlert.remediation && (
+                  <div>
+                    <Label>Remediation Steps</Label>
+                    <div className="mt-1 p-4 rounded-lg bg-muted prose prose-sm max-w-none">
+                      <ReactMarkdown>{selectedAlert.remediation}</ReactMarkdown>
                 </div>
               </div>
+                )}
+                {!selectedAlert.acknowledged && (
+                  <div className="flex justify-end">
+                    <Button onClick={() => handleAcknowledge(selectedAlert.id)}>
+                      <CheckCircle className="mr-2 h-4 w-4" />
+                      Acknowledge Alert
+                    </Button>
               </div>
-            ))}
+                )}
           </div>
         )}
+          </DialogContent>
+        </Dialog>
       </div>
     </MainLayout>
   );

@@ -30,6 +30,8 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 
 interface MetricsData {
   _id: string;
@@ -115,8 +117,61 @@ export default function AnalyticsPage() {
   const [selectedService, setSelectedService] = useState("all");
   const [selectedEnvironment, setSelectedEnvironment] = useState("all");
   const [selectedTimeRange, setSelectedTimeRange] = useState("7d");
+  const [isLiveUpdate, setIsLiveUpdate] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [availableServices, setAvailableServices] = useState<string[]>([]);
+  const [availableEnvironments, setAvailableEnvironments] = useState<string[]>([]);
+
+  const calculateHistoricalChanges = (currentData: MetricsData[], previousData: MetricsData[]) => {
+    const current = {
+      errorRate: calculateErrorRate(currentData),
+      eventsCount: calculateTotalEvents(currentData),
+      activeUsers: calculateActiveUsers(currentData),
+      avgResponseTime: calculateAvgResponseTime(currentData)
+    };
+
+    const previous = {
+      errorRate: calculateErrorRate(previousData),
+      eventsCount: calculateTotalEvents(previousData),
+      activeUsers: calculateActiveUsers(previousData),
+      avgResponseTime: calculateAvgResponseTime(previousData)
+    };
+
+    return {
+      errorRateChange: calculatePercentageChange(current.errorRate, previous.errorRate),
+      eventsCountChange: calculatePercentageChange(current.eventsCount, previous.eventsCount),
+      activeUsersChange: calculatePercentageChange(current.activeUsers, previous.activeUsers),
+      avgResponseTimeChange: calculatePercentageChange(current.avgResponseTime, previous.avgResponseTime)
+    };
+  };
+
+  const calculateErrorRate = (data: MetricsData[]) => {
+    const totalEvents = data.reduce((sum, metric) => sum + metric.total, 0);
+    const totalErrors = data.reduce((sum, metric) => sum + metric.errors, 0);
+    return totalEvents > 0 ? (totalErrors / totalEvents) * 100 : 0;
+  };
+
+  const calculateTotalEvents = (data: MetricsData[]) => {
+    return data.reduce((sum, metric) => sum + metric.total, 0);
+  };
+
+  const calculateActiveUsers = (data: MetricsData[]) => {
+    return data.reduce((sum, metric) => sum + (metric.log_types?.auth || 0), 0);
+  };
+
+  const calculateAvgResponseTime = (data: MetricsData[]) => {
+    const totalResponseTime = data.reduce((sum, metric) => {
+      const apiPerf = metric.log_types?.api_performance || 0;
+      return sum + apiPerf;
+    }, 0);
+    return data.length > 0 ? totalResponseTime / data.length : 0;
+  };
+
+  const calculatePercentageChange = (current: number, previous: number) => {
+    if (previous === 0) return current > 0 ? 100 : 0;
+    return ((current - previous) / previous) * 100;
+  };
 
   useEffect(() => {
     async function fetchAnalyticsData() {
@@ -124,93 +179,70 @@ export default function AnalyticsPage() {
         setIsLoading(true);
         setError(null);
 
-        const metricsData = await api.metrics.getAll({
+        // Fetch current period data
+        const currentData = await api.metrics.getAll({
           service: selectedService !== "all" ? selectedService : undefined,
           environment: selectedEnvironment !== "all" ? selectedEnvironment : undefined,
           timeRange: selectedTimeRange
         }) as MetricsData[];
 
-        if (metricsData && metricsData.length > 0) {
+        // Fetch previous period data for comparison
+        const previousTimeRange = getPreviousTimeRange(selectedTimeRange);
+        const previousData = await api.metrics.getAll({
+          service: selectedService !== "all" ? selectedService : undefined,
+          environment: selectedEnvironment !== "all" ? selectedEnvironment : undefined,
+          timeRange: previousTimeRange
+        }) as MetricsData[];
+
+        if (currentData && currentData.length > 0) {
+          // Extract available services and environments
+          const services = [...new Set(currentData.map(m => m.service_name))];
+          const environments = [...new Set(currentData.map(m => m.environment))];
+          setAvailableServices(services);
+          setAvailableEnvironments(environments);
+
           // Filter metrics based on selected service and environment
-          const filteredMetrics = metricsData.filter((metric: MetricsData) => {
+          const filteredMetrics = currentData.filter((metric: MetricsData) => {
             const serviceMatch = selectedService === "all" || metric.service_name === selectedService;
             const envMatch = selectedEnvironment === "all" || metric.environment === selectedEnvironment;
             return serviceMatch && envMatch;
           });
 
           // Calculate current metrics
-          const totalEvents = filteredMetrics.reduce((sum: number, metric: MetricsData) => sum + metric.total, 0);
-          const totalErrors = filteredMetrics.reduce((sum: number, metric: MetricsData) => sum + metric.errors, 0);
-          const errorRate = totalEvents > 0 ? (totalErrors / totalEvents) * 100 : 0;
+          const totalEvents = calculateTotalEvents(filteredMetrics);
+          const errorRate = calculateErrorRate(filteredMetrics);
+          const activeUsers = calculateActiveUsers(filteredMetrics);
+          const avgResponseTime = calculateAvgResponseTime(filteredMetrics);
 
-          // Calculate service error rates
-          const serviceMetrics = filteredMetrics.reduce((acc: ServiceMetrics, metric: MetricsData) => {
-            if (!acc[metric.service_name]) {
-              acc[metric.service_name] = { total: 0, errors: 0 };
-            }
-            acc[metric.service_name].total += metric.total;
-            acc[metric.service_name].errors += metric.errors;
-            return acc;
-          }, {} as ServiceMetrics);
+          // Calculate historical changes
+          const changes = calculateHistoricalChanges(filteredMetrics, previousData);
 
-          const serviceErrorRatesData = Object.entries(serviceMetrics).map(([service, data]) => ({
-            service,
-            errorRate: (data as { total: number; errors: number }).total > 0 ? ((data as { total: number; errors: number }).errors / (data as { total: number; errors: number }).total) * 100 : 0
-          }));
-
-          // Calculate environment events
-          const environmentMetrics = filteredMetrics.reduce((acc: EnvironmentMetrics, metric: MetricsData) => {
-            if (!acc[metric.environment]) {
-              acc[metric.environment] = 0;
-            }
-            acc[metric.environment] += metric.total;
-            return acc;
-          }, {} as EnvironmentMetrics);
-
-          const environmentEventsData = Object.entries(environmentMetrics).map(([environment, events]) => ({
-            environment,
-            events: events as number
-          }));
-
-          // Calculate error rate over time
-          const errorRateOverTime = filteredMetrics.map((metric: MetricsData) => ({
-            date: formatDate(new Date(metric.last_updated)),
-            errorRate: metric.total > 0 ? (metric.errors / metric.total) * 100 : 0
-          }));
-
-          // Update state
+          // Update metrics state
           setMetrics({
             errorRate,
             eventsCount: totalEvents,
-            activeUsers: filteredMetrics.reduce((sum, metric) => sum + (metric.log_types?.auth || 0), 0),
-            avgResponseTime: filteredMetrics.reduce((sum, metric) => {
-              const apiPerf = metric.log_types?.api_performance || 0;
-              return sum + apiPerf;
-            }, 0) / filteredMetrics.length || 0,
-            errorRateChange: 0, // We'll calculate this when we implement historical data
-            eventsCountChange: 0,
-            activeUsersChange: 0,
-            avgResponseTimeChange: 0
+            activeUsers,
+            avgResponseTime,
+            ...changes
           });
 
-          setServiceErrorRates(serviceErrorRatesData);
-          setEnvironmentEvents(environmentEventsData);
+          // Calculate service error rates
+          const serviceMetrics = calculateServiceMetrics(filteredMetrics);
+          setServiceErrorRates(serviceMetrics);
+
+          // Calculate environment events
+          const envEvents = calculateEnvironmentEvents(filteredMetrics);
+          setEnvironmentEvents(envEvents);
+
+          // Calculate error rate over time
+          const errorRateOverTime = calculateErrorRateOverTime(filteredMetrics);
           setErrorRateData(errorRateOverTime);
+
+          // Calculate performance metrics
+          const perfMetrics = calculatePerformanceMetrics(filteredMetrics);
+          setPerformanceMetrics(perfMetrics);
         } else {
-          // Reset metrics if no data
-          setMetrics({
-            errorRate: 0,
-            eventsCount: 0,
-            activeUsers: 0,
-            avgResponseTime: 0,
-            errorRateChange: 0,
-            eventsCountChange: 0,
-            activeUsersChange: 0,
-            avgResponseTimeChange: 0
-          });
-          setServiceErrorRates([]);
-          setEnvironmentEvents([]);
-          setErrorRateData([]);
+          resetMetrics();
         }
       } catch (err: unknown) {
         console.error("Error fetching analytics data:", err);
@@ -222,7 +254,98 @@ export default function AnalyticsPage() {
     }
 
     fetchAnalyticsData();
-  }, [selectedService, selectedEnvironment, selectedTimeRange]);
+
+    // Set up live updates
+    let intervalId: NodeJS.Timeout;
+    if (isLiveUpdate) {
+      intervalId = setInterval(fetchAnalyticsData, 30000); // Update every 30 seconds
+    }
+
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [selectedService, selectedEnvironment, selectedTimeRange, isLiveUpdate]);
+
+  const calculateServiceMetrics = (data: MetricsData[]) => {
+    const serviceMetrics = data.reduce((acc: ServiceMetrics, metric: MetricsData) => {
+      if (!acc[metric.service_name]) {
+        acc[metric.service_name] = { total: 0, errors: 0 };
+      }
+      acc[metric.service_name].total += metric.total;
+      acc[metric.service_name].errors += metric.errors;
+      return acc;
+    }, {} as ServiceMetrics);
+
+    return Object.entries(serviceMetrics).map(([service, data]) => ({
+      service,
+      errorRate: data.total > 0 ? (data.errors / data.total) * 100 : 0
+    }));
+  };
+
+  const calculateEnvironmentEvents = (data: MetricsData[]) => {
+    const envMetrics = data.reduce((acc: EnvironmentMetrics, metric: MetricsData) => {
+      if (!acc[metric.environment]) {
+        acc[metric.environment] = 0;
+      }
+      acc[metric.environment] += metric.total;
+      return acc;
+    }, {} as EnvironmentMetrics);
+
+    return Object.entries(envMetrics).map(([environment, events]) => ({
+      environment,
+      events
+    }));
+  };
+
+  const calculateErrorRateOverTime = (data: MetricsData[]) => {
+    return data
+      .sort((a, b) => new Date(a.last_updated).getTime() - new Date(b.last_updated).getTime())
+      .map((metric: MetricsData) => ({
+        date: formatDate(new Date(metric.last_updated)),
+        errorRate: metric.total > 0 ? (metric.errors / metric.total) * 100 : 0
+      }));
+  };
+
+  const calculatePerformanceMetrics = (data: MetricsData[]) => {
+    return data.map((metric: MetricsData) => ({
+      service: metric.service_name,
+      avgResponseTime: metric.log_types?.api_performance || 0
+    }));
+  };
+
+  const getPreviousTimeRange = (currentRange: string): string => {
+    switch (currentRange) {
+      case '24h':
+        return '48h';
+      case '7d':
+        return '14d';
+      case '30d':
+        return '60d';
+      case '90d':
+        return '180d';
+      default:
+        return '7d';
+    }
+  };
+
+  const resetMetrics = () => {
+    setMetrics({
+      errorRate: 0,
+      eventsCount: 0,
+      activeUsers: 0,
+      avgResponseTime: 0,
+      errorRateChange: 0,
+      eventsCountChange: 0,
+      activeUsersChange: 0,
+      avgResponseTimeChange: 0
+    });
+    setServiceErrorRates([]);
+    setEnvironmentEvents([]);
+    setErrorRateData([]);
+    setPerformanceMetrics([]);
+  };
 
   const handleExport = async () => {
     try {
@@ -286,6 +409,14 @@ export default function AnalyticsPage() {
             </p>
           </div>
           <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Label htmlFor="live-update">Live Updates</Label>
+              <Switch
+                id="live-update"
+                checked={isLiveUpdate}
+                onCheckedChange={setIsLiveUpdate}
+              />
+            </div>
             <Select value={selectedTimeRange} onValueChange={setSelectedTimeRange}>
               <SelectTrigger className="w-[180px]">
                 <SelectValue placeholder="Select time range" />
@@ -307,7 +438,7 @@ export default function AnalyticsPage() {
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <MetricCard
             title="Error Rate"
-            value={`${metrics.errorRate}%`}
+            value={`${metrics.errorRate.toFixed(2)}%`}
             change={metrics.errorRateChange}
             Icon={Activity}
           />
@@ -325,7 +456,7 @@ export default function AnalyticsPage() {
           />
           <MetricCard
             title="Avg. Response Time"
-            value={`${metrics.avgResponseTime} ms`}
+            value={`${metrics.avgResponseTime.toFixed(2)} ms`}
             change={metrics.avgResponseTimeChange}
             Icon={Clock}
           />
@@ -343,9 +474,9 @@ export default function AnalyticsPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Services</SelectItem>
-                    <SelectItem value="frontend">Frontend</SelectItem>
-                    <SelectItem value="backend">Backend</SelectItem>
-                    <SelectItem value="database">Database</SelectItem>
+                    {availableServices.map(service => (
+                      <SelectItem key={service} value={service}>{service}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <Select value={selectedEnvironment} onValueChange={setSelectedEnvironment}>
@@ -354,9 +485,9 @@ export default function AnalyticsPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Environments</SelectItem>
-                    <SelectItem value="production">Production</SelectItem>
-                    <SelectItem value="staging">Staging</SelectItem>
-                    <SelectItem value="development">Development</SelectItem>
+                    {availableEnvironments.map(env => (
+                      <SelectItem key={env} value={env}>{env}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -383,21 +514,8 @@ export default function AnalyticsPage() {
                         fontSize={12}
                         tickLine={false}
                         axisLine={false}
-                        tickFormatter={(value: number | string | undefined) => {
-                          if (typeof value === 'number') {
-                            return value.toFixed(0);
-                          }
-                          return '0';
-                        }}
-                        domain={[
-                          0,
-                          (dataMax: number | string | undefined) => {
-                            if (typeof dataMax === 'number') {
-                              return Math.ceil(dataMax * 1.1);
-                            }
-                            return 100; // Default maximum if value is undefined or not a number
-                          }
-                        ]}
+                        tickFormatter={(value) => `${value.toFixed(1)}%`}
+                        domain={[0, (dataMax: number) => Math.max(5, Math.ceil(dataMax * 1.1))]}
                       />
                       <Tooltip
                         content={({ active, payload }) => {
@@ -418,7 +536,7 @@ export default function AnalyticsPage() {
                                       Error Rate
                                     </span>
                                     <span className="font-bold">
-                                      {payload[0].value}%
+                                      {Number(payload[0].value).toFixed(2)}%
                                     </span>
                                   </div>
                                 </div>
@@ -456,14 +574,56 @@ export default function AnalyticsPage() {
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={serviceErrorRates}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="service" />
-                      <YAxis
-                        tickFormatter={(value) => (typeof value === 'number' ? `${value.toFixed(1)}%` : '0%')}
-                        domain={[0, 'dataMax']}
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <XAxis
+                        dataKey="service"
+                        stroke="hsl(var(--muted-foreground))"
+                        fontSize={12}
+                        tickLine={false}
+                        axisLine={false}
                       />
-                      <Tooltip />
-                      <Bar dataKey="errorRate" fill="#8884d8" />
+                      <YAxis
+                        stroke="hsl(var(--muted-foreground))"
+                        fontSize={12}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={(value) => `${value.toFixed(1)}%`}
+                        domain={[0, (dataMax: number) => Math.max(5, Math.ceil(dataMax * 1.1))]}
+                      />
+                      <Tooltip
+                        content={({ active, payload }) => {
+                          if (active && payload && payload.length) {
+                            return (
+                              <div className="rounded-lg border bg-background p-2 shadow-sm">
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div className="flex flex-col">
+                                    <span className="text-[0.70rem] uppercase text-muted-foreground">
+                                      Service
+                                    </span>
+                                    <span className="font-bold text-muted-foreground">
+                                      {payload[0].payload.service}
+                                    </span>
+                                  </div>
+                                  <div className="flex flex-col">
+                                    <span className="text-[0.70rem] uppercase text-muted-foreground">
+                                      Error Rate
+                                    </span>
+                                    <span className="font-bold">
+                                      {Number(payload[0].value).toFixed(2)}%
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }
+                          return null;
+                        }}
+                      />
+                      <Bar
+                        dataKey="errorRate"
+                        fill="hsl(var(--primary))"
+                        radius={[4, 4, 0, 0]}
+                      />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -485,14 +645,56 @@ export default function AnalyticsPage() {
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={environmentEvents}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="environment" />
-                      <YAxis
-                        tickFormatter={(value) => (typeof value === 'number' ? value.toFixed(0) : '0')}
-                        domain={[0, 'dataMax']}
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <XAxis
+                        dataKey="environment"
+                        stroke="hsl(var(--muted-foreground))"
+                        fontSize={12}
+                        tickLine={false}
+                        axisLine={false}
                       />
-                      <Tooltip />
-                      <Bar dataKey="events" fill="#82ca9d" />
+                      <YAxis
+                        stroke="hsl(var(--muted-foreground))"
+                        fontSize={12}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={(value) => formatNumber(value)}
+                        domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.1)]}
+                      />
+                      <Tooltip
+                        content={({ active, payload }) => {
+                          if (active && payload && payload.length) {
+                            return (
+                              <div className="rounded-lg border bg-background p-2 shadow-sm">
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div className="flex flex-col">
+                                    <span className="text-[0.70rem] uppercase text-muted-foreground">
+                                      Environment
+                                    </span>
+                                    <span className="font-bold text-muted-foreground">
+                                      {payload[0].payload.environment}
+                                    </span>
+                                  </div>
+                                  <div className="flex flex-col">
+                                    <span className="text-[0.70rem] uppercase text-muted-foreground">
+                                      Events
+                                    </span>
+                                    <span className="font-bold">
+                                      {typeof payload[0].value === 'number' ? formatNumber(payload[0].value) : 'N/A'}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }
+                          return null;
+                        }}
+                      />
+                      <Bar
+                        dataKey="events"
+                        fill="hsl(var(--primary))"
+                        radius={[4, 4, 0, 0]}
+                      />
                     </BarChart>
                   </ResponsiveContainer>
                 )}

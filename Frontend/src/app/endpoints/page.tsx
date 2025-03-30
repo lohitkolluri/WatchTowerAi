@@ -4,7 +4,7 @@ import { EndpointModal } from "@/components/endpoints/EndpointModal";
 import MainLayout from "@/components/layouts/main-layout";
 import { formatDate } from "@/lib/utils";
 import { endpointService } from "@/services/endpointService";
-import { AlertTriangle, Check, ExternalLink, Plus, RefreshCw, Search, Trash2, X, Settings, Filter, AlertCircle, Clock as ClockIcon, Lock } from "lucide-react";
+import { AlertTriangle, Check, ExternalLink, Plus, RefreshCw, Search, Trash2, X, Settings, Filter, AlertCircle, Clock as ClockIcon, Lock, Edit, MoreVertical, PlusCircle, Settings2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -36,6 +36,22 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { ArrowUpDown } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 
 // Define TypeScript interfaces for better type safety
 interface Endpoint {
@@ -112,6 +128,15 @@ export default function EndpointsPage() {
   });
   const [environments, setEnvironments] = useState<string[]>([]);
   const [services, setServices] = useState<string[]>([]);
+  const [selectedEndpoint, setSelectedEndpoint] = useState<Endpoint | null>(null);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [sortConfig, setSortConfig] = useState<{
+    key: keyof Endpoint;
+    direction: 'asc' | 'desc';
+  }>({ key: 'name', direction: 'asc' });
+  const [showEnvironmentModal, setShowEnvironmentModal] = useState(false);
+  const [newEnvironment, setNewEnvironment] = useState("");
+  const [customEnvironments, setCustomEnvironments] = useState<string[]>([]);
 
   // Save monitoring state to localStorage whenever it changes
   useEffect(() => {
@@ -139,6 +164,11 @@ export default function EndpointsPage() {
     });
   }, [endpoints.length]); // Only run when endpoints are loaded
 
+  // Update the endpoints array when filters change
+  useEffect(() => {
+    fetchEndpoints();
+  }, [filters, searchQuery, customEnvironments]); // Add customEnvironments as a dependency
+
   // Function to fetch and format endpoints
   const fetchEndpoints = async () => {
     try {
@@ -152,8 +182,7 @@ export default function EndpointsPage() {
         return;
       }
 
-      const endpointsData = Array.isArray(response) ? response :
-                          (response?.data || response?.endpoints || []);
+      const endpointsData = response;
 
       const formattedEndpoints = endpointsData.map((endpoint: EndpointBackendData) => ({
         id: endpoint._id,
@@ -177,10 +206,15 @@ export default function EndpointsPage() {
         return endpoint;
       });
 
-      // Extract unique environments and services
-      const uniqueEnvironments = Array.from(new Set(updatedEndpoints.map((e: Endpoint) => e.environment))) as string[];
+      // Create a list of unique environments that combines standard, custom, and endpoint environments
+      const uniqueEnvironments = Array.from(new Set([
+        ...standardEnvValues,
+        ...customEnvironments,
+        ...updatedEndpoints.map((e: Endpoint) => e.environment?.toLowerCase() || 'production')
+      ]));
+
       const uniqueServices = Array.from(new Set(updatedEndpoints.map((e: Endpoint) => e.service))) as string[];
-      setEnvironments(uniqueEnvironments);
+      setEnvironments(uniqueEnvironments as string[]);
       setServices(uniqueServices);
 
       // Apply filters
@@ -252,9 +286,9 @@ export default function EndpointsPage() {
       setShowRegisterModal(false);
 
       // Start monitoring the new endpoint after a short delay to ensure registration is complete
-      if (newEndpoint && newEndpoint._id) {
+      if (newEndpoint && newEndpoint.endpoint && newEndpoint.endpoint._id) {
         setTimeout(() => {
-          startMonitoring(newEndpoint._id, newEndpoint.url);
+          startMonitoring(newEndpoint.endpoint._id, newEndpoint.endpoint.url);
         }, 1000);
       }
 
@@ -271,7 +305,7 @@ export default function EndpointsPage() {
   const pingEndpoint = async (id: string, url: string) => {
     try {
       // Make an API call to our own service to ping the endpoint
-      const result = await endpointService.pingEndpoint(id, url);
+      const result = await endpointService.pingEndpoint(id);
       console.log(`Successfully pinged endpoint ${id}:`, result);
 
       // Update the endpoint's status in the UI
@@ -467,6 +501,206 @@ export default function EndpointsPage() {
     }
   };
 
+  // Function to handle editing an endpoint
+  const handleEditEndpoint = (endpoint: Endpoint) => {
+    setSelectedEndpoint(endpoint);
+    setIsEditMode(true);
+    setShowRegisterModal(true);
+  };
+
+  // Enhanced submit handler for both create and edit
+  const handleEndpointSubmit = async (formData: Record<string, any>) => {
+    try {
+      if (isEditMode && selectedEndpoint) {
+        // Update existing endpoint
+        await endpointService.updateEndpoint(selectedEndpoint.id, formData);
+        toast.success("Endpoint updated successfully");
+      } else {
+        // Create new endpoint
+        await handleRegisterEndpoint(formData);
+      }
+
+      // Reset state and refresh endpoints
+      setIsEditMode(false);
+      setSelectedEndpoint(null);
+      setShowRegisterModal(false);
+      await fetchEndpoints();
+    } catch (err) {
+      console.error("Error saving endpoint:", err);
+      toast.error("Failed to save endpoint");
+    }
+  };
+
+  // Function to handle sorting
+  const handleSort = (key: keyof Endpoint) => {
+    setSortConfig(current => ({
+      key,
+      direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc'
+    }));
+  };
+
+  // Sort endpoints based on current configuration
+  const sortedEndpoints = [...endpoints].sort((a, b) => {
+    const aValue = String(a[sortConfig.key] || '');
+    const bValue = String(b[sortConfig.key] || '');
+
+    return sortConfig.direction === 'asc'
+      ? aValue.localeCompare(bValue)
+      : bValue.localeCompare(aValue);
+  });
+
+  // Define standard environments with proper capitalization
+  const standardEnvironments = [
+    { value: 'production', label: 'Production' },
+    { value: 'staging', label: 'Staging' },
+    { value: 'development', label: 'Development' },
+    { value: 'testing', label: 'Testing' },
+    { value: 'qa', label: 'QA' }
+  ];
+
+  // Standard environment values for comparison
+  const standardEnvValues = standardEnvironments.map(env => env.value);
+
+  // Add after other useEffect hooks
+  useEffect(() => {
+    // Load custom environments from localStorage
+    const saved = localStorage.getItem('customEnvironments');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setCustomEnvironments(parsed);
+        }
+      } catch (e) {
+        console.error('Error loading custom environments:', e);
+      }
+    }
+  }, []);
+
+  // Add after other functions
+  const handleAddEnvironment = () => {
+    if (!newEnvironment.trim()) return;
+
+    const environment = newEnvironment.trim().toLowerCase();
+
+    // Check if environment already exists in standard environments
+    if (standardEnvValues.includes(environment)) {
+      toast.warning(`'${environment}' is already a standard environment`);
+      setNewEnvironment("");
+      return;
+    }
+
+    // Check if it's already in custom environments
+    if (customEnvironments.includes(environment)) {
+      toast.info(`Environment '${environment}' already exists`);
+      setNewEnvironment("");
+      return;
+    }
+
+    // Add the new environment
+    const updatedEnvironments = [...customEnvironments, environment];
+    setCustomEnvironments(updatedEnvironments);
+    localStorage.setItem('customEnvironments', JSON.stringify(updatedEnvironments));
+    toast.success(`Added new environment: ${environment}`);
+    setNewEnvironment("");
+  };
+
+  const handleRemoveEnvironment = (env: string) => {
+    // Prevent removing standard environments
+    if (standardEnvValues.includes(env)) {
+      toast.error("Cannot remove standard environments");
+      return;
+    }
+
+    const updatedEnvironments = customEnvironments.filter(e => e !== env);
+    setCustomEnvironments(updatedEnvironments);
+    localStorage.setItem('customEnvironments', JSON.stringify(updatedEnvironments));
+    toast.success(`Removed environment: ${env.charAt(0).toUpperCase() + env.slice(1)}`);
+  };
+
+  // Get all distinct environments from endpoints and add standard ones
+  const uniqueEnvironments = Array.from(new Set([
+    ...standardEnvValues,
+    ...customEnvironments,
+    ...(sortedEndpoints.map((e: Endpoint) => e.environment?.toLowerCase() || 'production'))
+  ])).sort();
+
+  // Format environments for display with proper capitalization
+  const formattedEnvironments = uniqueEnvironments.map(env => {
+    // Check if it's a standard environment
+    const standardEnv = standardEnvironments.find(e => e.value === env);
+    if (standardEnv) {
+      return standardEnv.label;
+    }
+    // Otherwise capitalize first letter
+    return env.charAt(0).toUpperCase() + env.slice(1);
+  });
+
+  // Environment management dialog
+  const environmentDialogContent = (
+    <DialogContent className="sm:max-w-md">
+      <DialogHeader>
+        <DialogTitle>Manage Environments</DialogTitle>
+        <DialogDescription>
+          Add or remove custom environments for your endpoints.
+        </DialogDescription>
+      </DialogHeader>
+
+      <div className="space-y-4 py-4">
+        <div className="flex items-center gap-2">
+          <Input
+            placeholder="Add new environment..."
+            value={newEnvironment}
+            onChange={(e) => setNewEnvironment(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                handleAddEnvironment();
+              }
+            }}
+          />
+          <Button onClick={handleAddEnvironment} type="button">
+            <PlusCircle className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <div className="space-y-1 max-h-[300px] overflow-y-auto pr-2">
+          <div className="font-medium text-sm text-muted-foreground mb-2">Standard Environments</div>
+          {standardEnvironments.map((env) => (
+            <div key={env.value} className="flex items-center justify-between py-2 px-3 rounded-md bg-muted/50">
+              <span className="text-sm font-medium">{env.label}</span>
+              <Badge variant="outline" className="text-xs">Default</Badge>
+            </div>
+          ))}
+
+          {customEnvironments.length > 0 && (
+            <div className="font-medium text-sm text-muted-foreground mt-4 mb-2">Custom Environments</div>
+          )}
+
+          {customEnvironments.map((env) => (
+            <div key={env} className="flex items-center justify-between py-2 px-3 rounded-md hover:bg-muted/30">
+              <span className="text-sm">{env.charAt(0).toUpperCase() + env.slice(1)}</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => handleRemoveEnvironment(env)}
+                className="h-8 w-8 p-0"
+              >
+                <Trash2 className="h-4 w-4 text-destructive" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <DialogFooter>
+        <Button onClick={() => setShowEnvironmentModal(false)}>
+          Done
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  );
+
   return (
     <MainLayout>
       <div className="space-y-6">
@@ -477,10 +711,16 @@ export default function EndpointsPage() {
               Monitor and manage your API endpoints
             </p>
           </div>
-          <Button onClick={() => setShowRegisterModal(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add Endpoint
-          </Button>
+          <div className="flex items-center gap-4">
+            <Button variant="outline" onClick={() => setShowEnvironmentModal(true)}>
+              <Settings2 className="mr-2 h-4 w-4" />
+              Manage Environments
+            </Button>
+            <Button onClick={() => setShowRegisterModal(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add Endpoint
+            </Button>
+          </div>
         </div>
 
         <Card>
@@ -500,9 +740,20 @@ export default function EndpointsPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Environments</SelectItem>
-                    {environments.map(env => (
-                      <SelectItem key={env} value={env}>{env}</SelectItem>
-                    ))}
+                    {environments.map(env => {
+                      // Capitalize first letter for display
+                      let displayName = env.charAt(0).toUpperCase() + env.slice(1);
+
+                      // If it's a standard environment, use the proper label
+                      const standardEnv = standardEnvironments.find(e => e.value === env);
+                      if (standardEnv) {
+                        displayName = standardEnv.label;
+                      }
+
+                      return (
+                        <SelectItem key={env} value={env}>{displayName}</SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               </div>
@@ -551,108 +802,149 @@ export default function EndpointsPage() {
           </CardContent>
         </Card>
 
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {isLoading ? (
-            Array.from({ length: 6 }).map((_, i) => (
-              <Card key={i} className="animate-pulse">
-                <CardHeader className="space-y-2">
-                  <Skeleton className="h-4 w-3/4" />
-                  <Skeleton className="h-3 w-1/2" />
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <Skeleton className="h-3 w-full" />
-                  <Skeleton className="h-3 w-2/3" />
-                  <Skeleton className="h-3 w-1/2" />
-                </CardContent>
-              </Card>
-            ))
-          ) : endpoints.length === 0 ? (
-            <Card className="col-span-full p-6">
-              <div className="text-center">
-                <h3 className="text-lg font-semibold">No endpoints found</h3>
-                <p className="text-muted-foreground mt-2">
-                  {error || "Add your first endpoint to start monitoring"}
-                </p>
-                {!error && (
-                  <Button
-                    onClick={() => setShowRegisterModal(true)}
-                    className="mt-4"
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    Add Endpoint
-                  </Button>
-                )}
-              </div>
-            </Card>
-          ) : (
-            endpoints.map((endpoint) => (
-              <Card key={endpoint.id} className="relative group">
-                <CardHeader>
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <CardTitle className="flex items-center gap-2">
-                        {endpoint.name}
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-[100px]">Status</TableHead>
+                <TableHead onClick={() => handleSort('name')} className="cursor-pointer">
+                  Name {sortConfig.key === 'name' && (
+                    <ArrowUpDown className="ml-2 h-4 w-4 inline" />
+                  )}
+                </TableHead>
+                <TableHead onClick={() => handleSort('service')} className="cursor-pointer">
+                  Service {sortConfig.key === 'service' && (
+                    <ArrowUpDown className="ml-2 h-4 w-4 inline" />
+                  )}
+                </TableHead>
+                <TableHead onClick={() => handleSort('environment')} className="cursor-pointer">
+                  Environment {sortConfig.key === 'environment' && (
+                    <ArrowUpDown className="ml-2 h-4 w-4 inline" />
+                  )}
+                </TableHead>
+                <TableHead>URL</TableHead>
+                <TableHead onClick={() => handleSort('lastChecked')} className="cursor-pointer">
+                  Last Checked {sortConfig.key === 'lastChecked' && (
+                    <ArrowUpDown className="ml-2 h-4 w-4 inline" />
+                  )}
+                </TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {isLoading ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center py-8">
+                    <div className="flex justify-center items-center gap-2">
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      Loading endpoints...
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : sortedEndpoints.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center py-8">
+                    <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                      <ExternalLink className="h-8 w-8" />
+                      <p>No endpoints found</p>
+                      {!error && (
+                        <Button
+                          onClick={() => setShowRegisterModal(true)}
+                          className="mt-4"
+                        >
+                          <Plus className="mr-2 h-4 w-4" />
+                          Add Endpoint
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : (
+                sortedEndpoints.map((endpoint) => (
+                  <TableRow key={endpoint.id}>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        {getStatusIcon(endpoint.status)}
                         <Badge variant={endpoint.status === "active" ? "secondary" : "destructive"}>
                           {endpoint.status}
                         </Badge>
-                      </CardTitle>
-                      <CardDescription className="mt-1">
-                        {endpoint.service} - {endpoint.environment}
-                      </CardDescription>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => toggleMonitoring(endpoint.id, endpoint.url)}
-                      >
-                        <RefreshCw
-                          className={`h-4 w-4 ${
-                            monitoringState[endpoint.id]?.isActive
-                              ? "text-green-500 animate-spin"
-                              : "text-muted-foreground"
-                          }`}
-                        />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleDeleteEndpoint(endpoint)}
-                      >
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <ExternalLink className="h-4 w-4" />
+                      </div>
+                    </TableCell>
+                    <TableCell>{endpoint.name}</TableCell>
+                    <TableCell>{endpoint.service}</TableCell>
+                    <TableCell>{endpoint.environment}</TableCell>
+                    <TableCell>
                       <a
                         href={endpoint.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="hover:underline truncate"
+                        className="flex items-center gap-2 hover:underline text-sm text-muted-foreground"
                       >
+                        <ExternalLink className="h-4 w-4" />
                         {endpoint.url}
                       </a>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <ClockIcon className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                      Last checked: {formatDate(endpoint.lastChecked)}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))
-          )}
-        </div>
+                    </TableCell>
+                    <TableCell>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger>
+                            <time dateTime={endpoint.lastChecked.toISOString()} className="text-sm text-muted-foreground">
+                              {formatDate(endpoint.lastChecked)}
+                            </time>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>{endpoint.lastChecked.toLocaleString()}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => toggleMonitoring(endpoint.id, endpoint.url)}
+                        >
+                          <RefreshCw
+                            className={`h-4 w-4 ${monitoringState[endpoint.id]?.isActive
+                              ? "text-green-500 animate-spin"
+                              : "text-muted-foreground"
+                              }`}
+                          />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleEditEndpoint(endpoint)}
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleDeleteEndpoint(endpoint)}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </Card>
       </div>
 
       <EndpointModal
         isOpen={showRegisterModal}
-        onClose={() => setShowRegisterModal(false)}
-        onSubmit={handleRegisterEndpoint}
+        onClose={() => {
+          setShowRegisterModal(false);
+          setIsEditMode(false);
+          setSelectedEndpoint(null);
+        }}
+        onSubmit={handleEndpointSubmit}
+        initialData={selectedEndpoint || undefined}
       />
 
       <AlertDialog open={!!endpointToDelete} onOpenChange={() => setEndpointToDelete(null)}>
@@ -675,6 +967,11 @@ export default function EndpointsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Add Environment Management Dialog */}
+      <Dialog open={showEnvironmentModal} onOpenChange={setShowEnvironmentModal}>
+        {environmentDialogContent}
+      </Dialog>
     </MainLayout>
   );
 }

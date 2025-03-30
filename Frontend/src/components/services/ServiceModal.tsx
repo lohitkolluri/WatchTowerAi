@@ -13,6 +13,12 @@ export interface ServiceFormData {
   environment: string;
   alertRules: string;
   notificationChannels: string[];
+  endpoint?: {
+    url: string;
+    method: string;
+    headers?: Record<string, string>;
+    timeout?: number;
+  };
 }
 
 export function ServiceModal({ isOpen, onClose, onSubmit, initialData }: ServiceModalProps) {
@@ -21,10 +27,20 @@ export function ServiceModal({ isOpen, onClose, onSubmit, initialData }: Service
     environment: initialData?.environment || "Production",
     alertRules: initialData?.alertRules || "",
     notificationChannels: initialData?.notificationChannels || ["Slack"],
+    endpoint: initialData?.endpoint || {
+      url: "",
+      method: "GET",
+      headers: {},
+      timeout: 5000
+    }
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showEndpointConfig, setShowEndpointConfig] = useState(false);
+  const [customHeaders, setCustomHeaders] = useState<{ key: string; value: string }[]>([
+    { key: "", value: "" }
+  ]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -46,6 +62,48 @@ export function ServiceModal({ isOpen, onClose, onSubmit, initialData }: Service
         };
       }
     });
+  };
+
+  const handleEndpointChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({
+      ...prev,
+      endpoint: {
+        ...prev.endpoint!,
+        [name]: name === 'timeout' ? parseInt(value) || 5000 : value
+      }
+    }));
+  };
+
+  const handleHeaderChange = (index: number, field: 'key' | 'value', value: string) => {
+    const newHeaders = [...customHeaders];
+    newHeaders[index][field] = value;
+
+    // Update the endpoint headers in formData
+    const headers: Record<string, string> = {};
+    newHeaders.forEach(header => {
+      if (header.key && header.value) {
+        headers[header.key] = header.value;
+      }
+    });
+
+    setCustomHeaders(newHeaders);
+    setFormData(prev => ({
+      ...prev,
+      endpoint: {
+        ...prev.endpoint!,
+        headers
+      }
+    }));
+  };
+
+  const addHeaderField = () => {
+    setCustomHeaders([...customHeaders, { key: "", value: "" }]);
+  };
+
+  const removeHeaderField = (index: number) => {
+    const newHeaders = customHeaders.filter((_, i) => i !== index);
+    setCustomHeaders(newHeaders);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -70,6 +128,11 @@ export function ServiceModal({ isOpen, onClose, onSubmit, initialData }: Service
 
     if (!formData.notificationChannels.length) {
       setError("At least one notification channel is required");
+      return;
+    }
+
+    if (showEndpointConfig && (!formData.endpoint?.url || !formData.endpoint?.method)) {
+      setError("Endpoint URL and method are required when endpoint configuration is enabled");
       return;
     }
 
@@ -199,6 +262,113 @@ export function ServiceModal({ isOpen, onClose, onSubmit, initialData }: Service
               </div>
             </div>
           </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={showEndpointConfig}
+                onChange={(e) => setShowEndpointConfig(e.target.checked)}
+                className="rounded border-gray-300 text-primary focus:ring-primary"
+              />
+              Configure Endpoint
+            </label>
+          </div>
+
+          {showEndpointConfig && (
+            <div className="space-y-4 border rounded-lg p-4 bg-muted/10">
+              <div className="space-y-2">
+                <label htmlFor="url" className="text-sm font-medium">
+                  Endpoint URL <span className="text-red-500">*</span>
+                </label>
+                <input
+                  id="url"
+                  name="url"
+                  value={formData.endpoint?.url}
+                  onChange={handleEndpointChange}
+                  placeholder="https://api.example.com/health"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  required={showEndpointConfig}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label htmlFor="method" className="text-sm font-medium">
+                  HTTP Method <span className="text-red-500">*</span>
+                </label>
+                <select
+                  id="method"
+                  name="method"
+                  value={formData.endpoint?.method}
+                  onChange={handleEndpointChange}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  required={showEndpointConfig}
+                >
+                  <option value="GET">GET</option>
+                  <option value="POST">POST</option>
+                  <option value="PUT">PUT</option>
+                  <option value="DELETE">DELETE</option>
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <label htmlFor="timeout" className="text-sm font-medium">
+                  Timeout (ms)
+                </label>
+                <input
+                  id="timeout"
+                  name="timeout"
+                  type="number"
+                  value={formData.endpoint?.timeout}
+                  onChange={handleEndpointChange}
+                  placeholder="5000"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  min="1000"
+                  max="30000"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium flex items-center justify-between">
+                  <span>Headers</span>
+                  <button
+                    type="button"
+                    onClick={addHeaderField}
+                    className="text-xs text-primary hover:text-primary/80"
+                  >
+                    + Add Header
+                  </button>
+                </label>
+                <div className="space-y-2">
+                  {customHeaders.map((header, index) => (
+                    <div key={index} className="flex gap-2">
+                      <input
+                        placeholder="Header name"
+                        value={header.key}
+                        onChange={(e) => handleHeaderChange(index, 'key', e.target.value)}
+                        className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      />
+                      <input
+                        placeholder="Value"
+                        value={header.value}
+                        onChange={(e) => handleHeaderChange(index, 'value', e.target.value)}
+                        className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      />
+                      {index > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => removeHeaderField(index)}
+                          className="text-destructive hover:text-destructive/80"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="flex justify-end space-x-2 pt-4">
             <button

@@ -1,36 +1,52 @@
+"use client";
+
+import { ServiceData, ServiceResponse } from '@/types/common';
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 // Helper function to handle API responses
-async function handleResponse(response: Response) {
+async function handleResponse<T>(response: Response, type?: string): Promise<T> {
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(error || 'An error occurred while fetching data');
+    let errorMessage = 'An error occurred while fetching data';
+    try {
+      const errorData = await response.json();
+      errorMessage = errorData.detail || errorMessage;
+    } catch (e) {
+      // JSON parsing failed, use status text
+      errorMessage = response.statusText || errorMessage;
+    }
+    throw new Error(errorMessage);
   }
-  return response.json();
+
+  if (type === 'void') {
+    return undefined as T;
+  }
+
+  return response.json() as Promise<T>;
 }
 
 export const serviceService = {
-  getAllServices: async () => {
+  getAllServices: async (): Promise<ServiceData[]> => {
     try {
       const response = await fetch(`${API_URL}/api/services`);
-      return handleResponse(response);
+      return handleResponse<ServiceData[]>(response, 'json');
     } catch (error) {
       console.error('Error fetching services:', error);
       throw error;
     }
   },
 
-  getServiceById: async (id: string) => {
+  getServiceById: async (id: string): Promise<ServiceResponse> => {
     try {
       const response = await fetch(`${API_URL}/api/services/${id}`);
-      return handleResponse(response);
+      return handleResponse<ServiceResponse>(response, 'json');
     } catch (error) {
       console.error(`Error fetching service ${id}:`, error);
       throw error;
     }
   },
 
-  createService: async (serviceData: any) => {
+  createService: async (serviceData: any): Promise<ServiceResponse> => {
     try {
       const response = await fetch(`${API_URL}/api/services`, {
         method: 'POST',
@@ -39,14 +55,14 @@ export const serviceService = {
         },
         body: JSON.stringify(serviceData),
       });
-      return handleResponse(response);
+      return handleResponse<ServiceResponse>(response, 'json');
     } catch (error) {
       console.error('Error creating service:', error);
       throw error;
     }
   },
 
-  updateService: async (id: string, serviceData: any) => {
+  updateService: async (id: string, serviceData: any): Promise<ServiceResponse> => {
     try {
       const response = await fetch(`${API_URL}/api/services/${id}`, {
         method: 'PUT',
@@ -55,7 +71,7 @@ export const serviceService = {
         },
         body: JSON.stringify(serviceData),
       });
-      return handleResponse(response);
+      return handleResponse<ServiceResponse>(response, 'json');
     } catch (error) {
       console.error(`Error updating service ${id}:`, error);
       throw error;
@@ -88,7 +104,7 @@ export const serviceService = {
         }
       }
 
-      return handleResponse(response);
+      return handleResponse<void>(response, 'void');
     } catch (error) {
       console.error(`Error deleting service ${id}:`, error);
       throw error;

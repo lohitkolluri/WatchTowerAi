@@ -1,25 +1,44 @@
 "use client";
 
-import MainLayout from "@/components/layouts/main-layout";
+import { ReactNode } from "react";
+import dynamic from 'next/dynamic';
 import Link from "next/link";
 import { formatNumber } from "@/lib/utils";
-import { AlertCircle, ChevronRight, Activity, Bell, Terminal, Settings, ExternalLink } from "lucide-react";
+import { AlertCircle, ChevronRight, Activity, Bell, Terminal, Settings, ExternalLink, BarChart2, ArrowUpRight, Loader2, ArrowRight } from "lucide-react";
 import { api } from "@/lib/api";
 import { useEffect, useState } from "react";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { Line as LineChart } from 'react-chartjs-2';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler,
+  ChartOptions
+} from 'chart.js';
+import { Service, Alert, ServiceHealth } from '@/types/common';
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { format } from "date-fns";
+
+const MainLayout = dynamic(() => import('@/components/layouts/main-layout'), { ssr: false });
+
+// Register ChartJS components
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+);
 
 // Add interfaces at the top of the file
-interface Alert {
-  _id: string;
-  message: string;
-  service_name: string;
-  environment: string;
-  severity: string;
-  status: string;
-  timestamp: string;
-  acknowledged: boolean;
-}
-
 interface FormattedAlert {
   id: string;
   title: string;
@@ -31,17 +50,9 @@ interface FormattedAlert {
   acknowledged: boolean;
 }
 
-interface ServiceHealth {
-  name: string;
-  status: string;
-  uptime?: number;
-  responseTime?: number;
-}
-
 interface ErrorRateDataPoint {
-  time: string;
-  errorRate: number;
   timestamp: string;
+  errorRate: number;
 }
 
 interface Log {
@@ -63,6 +74,119 @@ interface Metric {
   last_updated?: string;
 }
 
+interface QuickAction {
+  icon: any;
+  label: string;
+  href: string;
+}
+
+const ErrorRateCard = ({ data, isLoading }: { data: ErrorRateDataPoint[], isLoading: boolean }) => {
+  const chartData = {
+    labels: data.map(point => format(new Date(point.timestamp), 'HH:mm')),
+    datasets: [
+      {
+        label: 'Error Rate',
+        data: data.map(point => point.errorRate),
+        fill: true,
+        tension: 0.4,
+        borderColor: 'rgb(234, 179, 8)',
+        backgroundColor: 'rgba(234, 179, 8, 0.1)',
+        pointRadius: 3,
+        pointBackgroundColor: 'rgb(234, 179, 8)',
+        pointBorderColor: 'rgb(255, 255, 255)',
+        pointHoverRadius: 5,
+        pointHoverBackgroundColor: 'rgb(234, 179, 8)',
+        pointHoverBorderColor: 'rgb(255, 255, 255)',
+        borderWidth: 2,
+      }
+    ]
+  };
+
+  const options: ChartOptions<'line'> = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        display: false
+      },
+      tooltip: {
+        mode: 'index',
+        intersect: false,
+        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+        titleColor: 'rgb(255, 255, 255)',
+        bodyColor: 'rgb(255, 255, 255)',
+        borderColor: 'rgba(255, 255, 255, 0.1)',
+        borderWidth: 1,
+        padding: 10,
+        callbacks: {
+          label: function(context: any) {
+            return `Error Rate: ${context.parsed.y.toFixed(2)}%`;
+          }
+        }
+      }
+    },
+    interaction: {
+      mode: 'nearest',
+      axis: 'x',
+      intersect: false
+    },
+    scales: {
+      x: {
+        display: true,
+        grid: {
+          display: false
+        },
+        ticks: {
+          color: 'rgb(156, 163, 175)',
+          maxRotation: 0
+        }
+      },
+      y: {
+        display: true,
+        beginAtZero: true,
+        grid: {
+          color: 'rgba(156, 163, 175, 0.1)'
+        },
+        ticks: {
+          color: 'rgb(156, 163, 175)',
+          callback: function(value: any) {
+            return value + '%';
+          }
+        }
+      }
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle>Error Rate</CardTitle>
+          <Link href="/analytics" className="text-sm text-muted-foreground hover:text-primary transition-colors">
+            <div className="flex items-center gap-1">
+              View Analytics
+              <ArrowRight className="h-4 w-4" />
+            </div>
+          </Link>
+        </div>
+      </CardHeader>
+      <CardContent className="h-[300px] relative">
+        {isLoading ? (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : data.length === 0 ? (
+          <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
+            No error rate data available
+          </div>
+        ) : (
+          <LineChart data={chartData} options={options} />
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+
 export default function Dashboard() {
   const [logVolume, setLogVolume] = useState<number>(0);
   const [activeAlerts, setActiveAlerts] = useState<FormattedAlert[]>([]);
@@ -72,310 +196,251 @@ export default function Dashboard() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function fetchDashboardData() {
-      try {
-        setIsLoading(true);
-
-        // Fetch active alerts
-        const alertsData = await api.alerts.getAll({ status: "active" });
-        const formattedAlerts = alertsData.map((alert: Alert): FormattedAlert => ({
-          id: alert._id,
-          title: alert.message,
-          service: alert.service_name,
-          environment: alert.environment,
-          severity: alert.severity,
-          status: alert.status,
-          timestamp: new Date(alert.timestamp),
-          acknowledged: alert.acknowledged
-        }));
-        setActiveAlerts(formattedAlerts);
-
-        // Fetch metrics for service health and error rate
-        const metricsResponse = await api.metrics.getAll();
-        const metricsData = Array.isArray(metricsResponse) ? metricsResponse :
-                           metricsResponse?.metrics || metricsResponse?.data || [];
-
-        if (metricsData.length === 0) {
-          console.warn("No metrics data found");
-          setServiceHealth([]);
-          setErrorRateData([]);
-          setLogVolume(0);
-          return;
-        }
-
-        // Format service health data with better status determination
-        const formattedHealth = metricsData.map((metric: Metric) => {
-          const total = metric.total_requests || metric.total || 0;
-          const errors = metric.errors || 0;
-          const errorRate = total > 0 ? (errors / total * 100) : 0;
-
-          // Determine status based on error rate thresholds
-          let status = "healthy";
-          if (errorRate >= 5) {
-            status = "critical";
-          } else if (errorRate > 0) {
-            status = "warning";
-          }
-
-          return {
-            name: metric.service_name,
-            status,
-            uptime: total > 0 ? 100 - errorRate : 100,
-            responseTime: 0
-          };
-        });
-        setServiceHealth(formattedHealth);
-
-        // Aggregate error rate data by hour to avoid too many data points
-        const sortedMetrics = [...metricsData].sort((a, b) => {
-          const aTime = a.last_updated || a.updated_at || new Date().toISOString();
-          const bTime = b.last_updated || b.updated_at || new Date().toISOString();
-          return new Date(aTime).getTime() - new Date(bTime).getTime();
-        });
-
-        // Group metrics by hour and calculate average error rate
-        const hourlyMetrics = new Map<string, { total: number; errors: number; count: number }>();
-
-        sortedMetrics.forEach((metric: Metric) => {
-          const timestamp = metric.last_updated || metric.updated_at || new Date().toISOString();
-          const date = new Date(timestamp);
-          const hourKey = date.toISOString().slice(0, 13); // Group by hour
-
-          const total = metric.total_requests || metric.total || 0;
-          const errors = metric.errors || 0;
-
-          const existing = hourlyMetrics.get(hourKey) || { total: 0, errors: 0, count: 0 };
-          hourlyMetrics.set(hourKey, {
-            total: existing.total + total,
-            errors: existing.errors + errors,
-            count: existing.count + 1
-          });
-        });
-
-        const errorRatePoints = Array.from(hourlyMetrics.entries())
-          .map(([hourKey, data]) => {
-            const date = new Date(hourKey);
-            return {
-              time: date.toLocaleTimeString([], {
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: false
-              }),
-              errorRate: data.total > 0 ? (data.errors / data.total * 100) : 0,
-              timestamp: hourKey
-            };
-          })
-          .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
-        setErrorRateData(errorRatePoints);
-
-        // Calculate total events for log volume using the aggregated data
-        const totalEvents = Array.from(hourlyMetrics.values()).reduce(
-          (sum, data) => sum + data.total,
-          0
-        );
-        setLogVolume(totalEvents);
-
-      } catch (err: unknown) {
-        console.error("Error fetching dashboard data:", err);
-        setError(err instanceof Error ? err.message : "An error occurred");
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
-    fetchDashboardData();
-  }, []);
-
   // Add quick actions
-  const quickActions = [
+  const quickActions: QuickAction[] = [
     { icon: Activity, label: "View Metrics", href: "/analytics" },
     { icon: Bell, label: "Manage Alerts", href: "/alerts" },
     { icon: Terminal, label: "View Logs", href: "/logs" },
     { icon: Settings, label: "Settings", href: "/settings" },
   ];
 
+  useEffect(() => {
+    const fetchDashboardData = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+
+        // Fetch services with their metrics
+        const services = await api.services.getAll();
+        console.log('Services with metrics:', services);
+
+        if (!services || services.length === 0) {
+          console.warn('No services found');
+          setServiceHealth([]);
+        } else {
+          // Format service health data
+          const healthData: ServiceHealth[] = services.map((service: Service) => ({
+            name: service.name,
+            status: service.status || 'healthy',
+            metrics: service.metrics || null
+          }));
+
+          setServiceHealth(healthData);
+        }
+
+        // Fetch and format alerts
+        const alertsResponse = await api.alerts.getAll();
+        const formattedAlerts = Array.isArray(alertsResponse)
+          ? alertsResponse
+          : alertsResponse?.alerts || [];
+
+        if (!formattedAlerts || formattedAlerts.length === 0) {
+          console.warn('No alerts found');
+          setActiveAlerts([]);
+        } else {
+          setActiveAlerts(formattedAlerts.map((alert: Alert): FormattedAlert => ({
+            id: alert._id,
+            title: alert.message,
+            service: alert.service_name,
+            environment: alert.environment,
+            severity: alert.severity,
+            status: alert.status,
+            timestamp: new Date(alert.timestamp),
+            acknowledged: alert.acknowledged
+          })));
+        }
+
+        // Fetch log volume
+        const logsData = await api.logs.getAll();
+        setLogVolume(logsData.length || 0);
+
+        // Fetch metrics for service health and error rate
+        const metricsResponse = await api.metrics.getAll();
+        console.log('Metrics response:', metricsResponse);
+        const metricsData = Array.isArray(metricsResponse) ? metricsResponse :
+                           metricsResponse?.metrics || metricsResponse?.data || [];
+
+        if (metricsData.length === 0) {
+          console.warn("No metrics data found");
+          setErrorRateData([]);
+          setLogVolume(0);
+          return;
+        }
+
+        // Format error rate data - sort by timestamp and calculate error rate
+        const sortedMetrics = [...metricsData].sort((a, b) => {
+          const aTime = a.last_updated || a.updated_at || new Date().toISOString();
+          const bTime = b.last_updated || b.updated_at || new Date().toISOString();
+          return new Date(aTime).getTime() - new Date(bTime).getTime();
+        });
+
+        const errorRatePoints = sortedMetrics.map((metric: Metric) => {
+          const timestamp = metric.last_updated || metric.updated_at || new Date().toISOString();
+          const total = metric.total_requests || metric.total || 0;
+          const errors = metric.errors || 0;
+          return {
+            time: new Date(timestamp).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false
+            }),
+            errorRate: total > 0 ? (errors / total * 100) : 0,
+            timestamp: timestamp
+          };
+        });
+
+        setErrorRateData(errorRatePoints);
+
+        // Calculate total events for log volume
+        const totalEvents = metricsData.reduce((sum: number, metric: Metric) => {
+          const total = metric.total_requests || metric.total || 0;
+          return sum + total;
+        }, 0);
+        setLogVolume(totalEvents);
+
+      } catch (error) {
+        console.error('Error loading dashboard data:', error);
+        setError(error instanceof Error ? error.message : 'Failed to load dashboard data. Please try again later.');
+        // Set empty states for all data
+        setServiceHealth([]);
+        setActiveAlerts([]);
+        setErrorRateData([]);
+        setLogVolume(0);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchDashboardData();
+  }, []);
+
   return (
     <MainLayout>
-      <div className="space-y-6">
-        <div className="flex justify-between items-center">
-          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-          <div className="flex gap-4">
-            {quickActions.map((action) => (
-              <Link
-                key={action.label}
-                href={action.href}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-secondary hover:bg-secondary/80 transition-colors"
-              >
-                <action.icon className="h-4 w-4" />
-                <span className="text-sm font-medium hidden sm:inline">{action.label}</span>
-              </Link>
-            ))}
-          </div>
-        </div>
-
-        {error && (
-          <div className="rounded-lg border border-destructive bg-destructive/10 p-4 text-destructive animate-in fade-in slide-in-from-top-2">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="h-5 w-5" />
-              <p>Error loading dashboard data: {error}</p>
+      <div className="grid gap-4">
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent animate-in fade-in slide-in-from-left-5">Dashboard</h1>
+              <p className="text-muted-foreground mt-1 animate-in fade-in slide-in-from-left-5 delay-100">Monitor your services in real-time</p>
             </div>
-          </div>
-        )}
-
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {/* Log Volume Card */}
-          <div className="rounded-xl border bg-card text-card-foreground shadow-sm hover:shadow-md transition-all duration-200 hover:scale-[1.02]">
-            <div className="p-6 space-y-2">
-              <h3 className="text-lg font-medium flex items-center gap-2">
-                <Terminal className="h-5 w-5 text-primary" />
-                Log Volume
-              </h3>
-              {isLoading ? (
-                <div className="space-y-3">
-                  <div className="h-8 bg-muted/50 rounded animate-pulse" />
-                  <div className="h-4 w-24 bg-muted/50 rounded animate-pulse" />
-                </div>
-              ) : (
-                <>
-                  <div className="text-5xl font-bold text-primary">
-                    {formatNumber(logVolume)}
-                  </div>
-                  <p className="text-sm text-muted-foreground">Total logs across all services</p>
-                </>
-              )}
+            <div className="flex flex-wrap gap-2 sm:gap-4 animate-in fade-in slide-in-from-right-5">
+              {quickActions.map((action, index) => (
+                <Link
+                  key={action.label}
+                  href={action.href}
+                  className="group flex items-center gap-2 px-3 py-2 rounded-lg bg-secondary hover:bg-primary hover:text-primary-foreground transition-all duration-200 animate-in fade-in slide-in-from-right-5 text-black"
+                  style={{ animationDelay: `${index * 100}ms` }}
+                >
+                  <action.icon className="h-4 w-4 transition-transform group-hover:scale-110 text-black group-hover:text-primary-foreground" />
+                  <span className="text-sm font-medium hidden sm:inline text-black group-hover:text-primary-foreground">{action.label}</span>
+                </Link>
+              ))}
             </div>
           </div>
 
-          {/* Error Rate Card */}
-          <div className="rounded-xl border bg-card text-card-foreground shadow-sm hover:shadow-md transition-all duration-200 hover:scale-[1.02] col-span-2">
-            <div className="p-6">
-              <div className="flex justify-between items-center">
-                <h3 className="text-lg font-medium flex items-center gap-2">
-                  <Activity className="h-5 w-5 text-primary" />
-                  Error Rate
-                </h3>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground">Last 24h</span>
-                  <Link href="/analytics" className="text-primary hover:text-primary/80 transition-colors">
-                    <ExternalLink className="h-4 w-4" />
-                  </Link>
-                </div>
+          {error && (
+            <div className="rounded-lg border border-destructive bg-destructive/10 p-4 text-destructive animate-in fade-in slide-in-from-top-2">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-5 w-5 animate-pulse" />
+                <p>Error loading dashboard data: {error}</p>
               </div>
-              <div className="h-[200px] w-full mt-4">
+            </div>
+          )}
+
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {/* Log Volume Card */}
+            <div className="rounded-xl border bg-card text-card-foreground shadow-sm hover:shadow-md transition-all duration-200 hover:scale-[1.02] relative overflow-hidden group animate-in fade-in-50">
+              <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="absolute top-2 right-2">
+                <Link href="/logs" className="text-muted-foreground hover:text-primary transition-colors">
+                  <ArrowUpRight className="h-4 w-4 group-hover:scale-110 transition-transform" />
+                </Link>
+              </div>
+              <div className="p-6 space-y-2">
+                <h3 className="text-lg font-medium flex items-center gap-2">
+                  <Terminal className="h-5 w-5 text-primary" />
+                  Log Volume
+                </h3>
                 {isLoading ? (
-                  <div className="h-full w-full flex items-center justify-center bg-muted/20 rounded-lg animate-pulse">
-                    <div className="text-muted-foreground text-sm">Loading chart data...</div>
+                  <div className="space-y-3">
+                    <div className="h-8 bg-muted/50 rounded animate-pulse" />
+                    <div className="h-4 w-24 bg-muted/50 rounded animate-pulse" />
                   </div>
-                ) : errorRateData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart
-                      data={errorRateData}
-                      margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.2} />
-                      <XAxis
-                        dataKey="time"
-                        tick={{ fontSize: 12 }}
-                        tickLine={false}
-                        axisLine={{ stroke: '#e5e7eb', strokeWidth: 1 }}
-                      />
-                      <YAxis
-                        tickFormatter={(value: number) => `${value}%`}
-                        tick={{ fontSize: 12 }}
-                        tickLine={false}
-                        axisLine={false}
-                        width={40}
-                        domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.1)]}
-                      />
-                      <Tooltip
-                        formatter={(value: number) => [`${value.toFixed(2)}%`, 'Error Rate']}
-                        contentStyle={{
-                          backgroundColor: 'var(--background)',
-                          border: '1px solid var(--border)',
-                          borderRadius: 'var(--radius)',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                        }}
-                        cursor={{ stroke: 'var(--primary)', strokeWidth: 1, strokeDasharray: '3 3' }}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="errorRate"
-                        stroke="var(--primary)"
-                        strokeWidth={2.5}
-                        dot={false}
-                        activeDot={{
-                          r: 6,
-                          stroke: 'var(--primary)',
-                          strokeWidth: 2,
-                          fill: 'var(--background)'
-                        }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
                 ) : (
-                  <div className="h-full w-full flex items-center justify-center bg-muted/20 rounded-lg">
-                    <div className="text-muted-foreground text-sm">No error rate data available</div>
-                  </div>
+                  <>
+                    <div className="text-5xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+                      {formatNumber(logVolume)}
+                    </div>
+                    <p className="text-sm text-muted-foreground flex items-center gap-2">
+                      <BarChart2 className="h-4 w-4" />
+                      Total logs across all services
+                    </p>
+                  </>
                 )}
               </div>
             </div>
-          </div>
 
-          {/* Active Alerts Card */}
-          <div className="rounded-xl border bg-card text-card-foreground shadow-sm hover:shadow-md transition-all duration-200 hover:scale-[1.02]">
-            <div className="p-6">
-              <div className="flex justify-between items-center">
-                <h3 className="text-lg font-medium flex items-center gap-2">
-                  <Bell className="h-5 w-5 text-primary" />
-                  Active Alerts
-                </h3>
-                <Link
-                  href="/alerts"
-                  className="text-sm text-primary hover:text-primary/80 transition-colors flex items-center gap-1"
-                >
-                  View All
-                  <ChevronRight className="h-4 w-4" />
+            {/* Error Rate Card */}
+            <ErrorRateCard data={errorRateData} isLoading={isLoading} />
+
+            {/* Active Alerts Card */}
+            <div className="rounded-xl border bg-card text-card-foreground shadow-sm hover:shadow-md transition-all duration-200 hover:scale-[1.02] relative overflow-hidden">
+              <div className="absolute top-2 right-2">
+                <Link href="/alerts" className="text-muted-foreground hover:text-primary transition-colors">
+                  <ArrowUpRight className="h-4 w-4" />
                 </Link>
               </div>
-              <div className="mt-4 space-y-4">
+              <div className="p-6">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-lg font-medium flex items-center gap-2">
+                    <Bell className="h-5 w-5 text-primary" />
+                    Active Alerts
+                    {!isLoading && activeAlerts.length > 0 && (
+                      <span className="inline-flex items-center justify-center w-6 h-6 text-xs font-medium rounded-full bg-primary/10 text-primary">
+                        {activeAlerts.length}
+                      </span>
+                    )}
+                  </h3>
+                </div>
                 {isLoading ? (
-                  Array(3).fill(0).map((_, i) => (
-                    <div key={i} className="border-b pb-4 last:border-0 last:pb-0 space-y-2">
-                      <div className="h-5 bg-muted/50 rounded w-3/4 animate-pulse" />
-                      <div className="h-4 bg-muted/50 rounded w-1/2 animate-pulse" />
-                    </div>
-                  ))
-                ) : activeAlerts.length > 0 ? (
-                  activeAlerts.map((alert) => (
-                    <div key={alert.id} className="border-b pb-4 last:border-0 last:pb-0 group">
-                      <Link href={`/alerts/${alert.id}`} className="block">
-                        <div className="flex justify-between items-start group-hover:opacity-80 transition-opacity">
-                          <div className="flex items-start gap-2">
-                            <AlertCircle className={`h-5 w-5 ${
-                              alert.severity === 'critical' ? 'text-destructive' :
-                              alert.severity === 'warning' ? 'text-yellow-500' :
-                              'text-primary'
-                            } mt-0.5`} />
-                            <div>
-                              <div className="font-medium">{alert.title}</div>
-                              <div className="text-sm text-muted-foreground">
-                                {alert.service}
-                              </div>
-                            </div>
-                          </div>
-                          <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:translate-x-1 transition-transform" />
-                        </div>
-                      </Link>
-                    </div>
-                  ))
+                  <div className="space-y-3">
+                    <div className="h-12 bg-muted/50 rounded animate-pulse" />
+                    <div className="h-12 bg-muted/50 rounded animate-pulse" />
+                  </div>
+                ) : activeAlerts.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">No active alerts</div>
                 ) : (
-                  <div className="text-sm text-muted-foreground flex items-center justify-center py-8">
-                    <div className="text-center">
-                      <Bell className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
-                      <p>No active alerts</p>
-                    </div>
+                  <div className="space-y-4">
+                    {activeAlerts.slice(0, 5).map((alert) => (
+                      <div key={alert.id} className="flex items-start gap-4">
+                        <div className="flex-1 space-y-1">
+                          <p className="text-sm font-medium">{alert.title}</p>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <span>{alert.service}</span>
+                            <span>•</span>
+                            <span>{format(alert.timestamp, 'HH:mm')}</span>
+                          </div>
+                        </div>
+                        <div className={`px-2 py-1 rounded-full text-xs font-medium ${
+                          alert.severity === 'critical'
+                            ? 'bg-destructive/10 text-destructive'
+                            : alert.severity === 'warning'
+                            ? 'bg-warning/10 text-warning'
+                            : 'bg-primary/10 text-primary'
+                        }`}>
+                          {alert.severity}
+                        </div>
+                      </div>
+                    ))}
+                    {activeAlerts.length > 5 && (
+                      <Link
+                        href="/alerts"
+                        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-primary transition-colors"
+                      >
+                        View all alerts
+                        <ChevronRight className="h-4 w-4" />
+                      </Link>
+                    )}
                   </div>
                 )}
               </div>
@@ -383,51 +448,77 @@ export default function Dashboard() {
           </div>
 
           {/* Service Health Card */}
-          <div className="rounded-xl border bg-card text-card-foreground shadow-sm hover:shadow-md transition-all duration-200 hover:scale-[1.02] col-span-2">
+          <div className="rounded-xl border bg-card text-card-foreground shadow-sm">
             <div className="p-6">
-              <h3 className="text-lg font-medium flex items-center gap-2">
-                <Activity className="h-5 w-5 text-primary" />
-                Service Health
-              </h3>
-              <div className="mt-4 space-y-4">
-                {isLoading ? (
-                  Array(4).fill(0).map((_, i) => (
-                    <div key={i} className="border-b pb-4 last:border-0 last:pb-0">
-                      <div className="flex items-center justify-between">
-                        <div className="h-5 bg-muted/50 rounded w-1/3 animate-pulse" />
-                        <div className="h-5 bg-muted/50 rounded w-20 animate-pulse" />
-                      </div>
-                    </div>
-                  ))
-                ) : serviceHealth.length > 0 ? (
-                  serviceHealth.map((service) => (
-                    <div key={service.name} className="border-b pb-4 last:border-0 last:pb-0 hover:bg-muted/5 -mx-6 px-6 transition-colors">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">{service.name}</span>
-                        <div className="flex items-center gap-2">
-                          <div className={`h-2.5 w-2.5 rounded-full ${
-                            service.status === 'critical' ? 'bg-destructive animate-pulse' :
-                            service.status === 'warning' ? 'bg-yellow-500 animate-pulse' : 'bg-green-500'
-                          }`} />
-                          <span className={`text-sm ${
-                            service.status === 'critical' ? 'text-destructive' :
-                            service.status === 'warning' ? 'text-yellow-500' : 'text-green-600'
-                          }`}>
-                            {service.status === 'critical' ? 'Critical' : service.status === 'warning' ? 'Warning' : 'Healthy'}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-sm text-muted-foreground flex items-center justify-center py-8">
-                    <div className="text-center">
-                      <Activity className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
-                      <p>No service health data available</p>
-                    </div>
-                  </div>
-                )}
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-medium flex items-center gap-2">
+                  <Activity className="h-5 w-5 text-primary" />
+                  Service Health
+                </h3>
+                <Link href="/services" className="text-muted-foreground hover:text-primary transition-colors">
+                  <ArrowUpRight className="h-4 w-4" />
+                </Link>
               </div>
+              {isLoading ? (
+                <div className="space-y-3">
+                  {Array.from({ length: 3 }).map((_, index) => (
+                    <div key={`loading-service-${index}`} className="flex items-center justify-between p-3 rounded-lg border">
+                      <div className="flex items-center gap-3">
+                        <div className="h-4 w-32 bg-muted/50 rounded animate-pulse" />
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div className="h-4 w-20 bg-muted/50 rounded animate-pulse" />
+                        <div className="h-4 w-4 bg-muted/50 rounded-full animate-pulse" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : serviceHealth.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No services found</div>
+              ) : (
+                <div className="space-y-3">
+                  {serviceHealth.map((service) => (
+                    <div
+                      key={service.name}
+                      className="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="font-medium">{service.name}</span>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        {service.metrics?.uptime !== undefined && (
+                          <span className="text-sm text-muted-foreground">
+                            Uptime: {service.metrics.uptime.toFixed(1)}%
+                          </span>
+                        )}
+                        {service.metrics?.responseTime !== undefined && (
+                          <span className="text-sm text-muted-foreground">
+                            Response: {service.metrics.responseTime.toFixed(0)}ms
+                          </span>
+                        )}
+                        <div
+                          className={`h-2 w-2 rounded-full ${
+                            service.status === "healthy"
+                              ? "bg-green-500"
+                              : service.status === "warning"
+                              ? "bg-yellow-500"
+                              : "bg-red-500"
+                          }`}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                  {serviceHealth.length > 5 && (
+                    <Link
+                      href="/services"
+                      className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-primary transition-colors"
+                    >
+                      View all services
+                      <ChevronRight className="h-4 w-4" />
+                    </Link>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
