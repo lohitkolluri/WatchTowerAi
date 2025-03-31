@@ -18,7 +18,7 @@ export function EndpointModal({ isOpen, onClose, onSubmit, initialData }: Endpoi
         <EndpointForm
           onSubmit={onSubmit}
           onCancel={onClose}
-          initialData={initialData}
+          initialData={initialData as { id?: string; name: string; url: string; method: string; service?: string; environment?: string; description?: string } | undefined}
         />
       </DialogContent>
     </Dialog>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useEnvironments, normalizeEnvironment, addCustomEnvironment } from "@/lib/environments";
 
 interface EndpointFormProps {
   initialData?: {
@@ -33,68 +34,23 @@ export default function EndpointForm({
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [customEnvironments, setCustomEnvironments] = useState<string[]>([]);
 
-  // Define standard environments with proper capitalization
-  const standardEnvironments = [
-    { value: 'production', label: 'Production' },
-    { value: 'staging', label: 'Staging' },
-    { value: 'development', label: 'Development' },
-    { value: 'testing', label: 'Testing' },
-    { value: 'qa', label: 'QA' }
-  ];
+  // Use our environment hook instead of managing custom environments directly
+  const { allEnvironments, addEnvironment } = useEnvironments();
 
-  // Standard environment values for comparison
-  const standardEnvValues = standardEnvironments.map(env => env.value);
-
-  // Load custom environments
-  useEffect(() => {
-    const saved = localStorage.getItem('customEnvironments');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          setCustomEnvironments(parsed);
-        }
-      } catch (e) {
-        console.error('Error loading custom environments:', e);
-      }
-    }
-  }, []);
-
-  // Set up initial data
+  // Initialize form data when initial data is provided
   useEffect(() => {
     if (initialData) {
-      const environment = initialData.environment?.toLowerCase() || 'production';
-
-      // Check if this environment is already in our standard environments or custom environments
-      const isStandardEnv = standardEnvValues.includes(environment);
-      const isInCustomEnvs = customEnvironments.includes(environment);
-
-      // Only add to custom environments if it's a new environment
-      if (environment && !isStandardEnv && !isInCustomEnvs) {
-        setCustomEnvironments(prev => [...prev, environment]);
-      }
-
       setFormData({
         name: initialData.name || '',
         url: initialData.url || '',
         method: initialData.method || 'GET',
         service: initialData.service || '',
-        environment: environment,
+        environment: normalizeEnvironment(initialData.environment),
         description: initialData.description || ''
       });
     }
-  }, [initialData, customEnvironments]);
-
-  // Combine standard and custom environments for the select dropdown
-  const environments = [
-    ...standardEnvironments,
-    ...customEnvironments.filter(env => !standardEnvValues.includes(env)).map(env => ({
-      value: env,
-      label: env.charAt(0).toUpperCase() + env.slice(1) // Capitalize first letter
-    }))
-  ];
+  }, [initialData]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -155,18 +111,16 @@ export default function EndpointForm({
         url: formData.url.trim(),
         method: formData.method,
         service: formData.service.trim(),
-        environment: formData.environment.toLowerCase(),
+        environment: normalizeEnvironment(formData.environment),
         description: formData.description.trim() || undefined
       };
 
       console.log('Submitting endpoint with data:', data);
       await onSubmit(data);
 
-      if (formData.environment && !environments.some(env => env.value === formData.environment)) {
-        const newEnvironment = formData.environment.toLowerCase();
-        const updatedEnvironments = [...customEnvironments, newEnvironment];
-        setCustomEnvironments(updatedEnvironments);
-        localStorage.setItem('customEnvironments', JSON.stringify(updatedEnvironments));
+      // Add environment if it's new
+      if (formData.environment) {
+        addEnvironment(formData.environment);
       }
 
       if (!isEditing) {
@@ -244,7 +198,7 @@ export default function EndpointForm({
               <SelectValue placeholder="Select an environment" />
             </SelectTrigger>
             <SelectContent>
-              {environments.map((env) => (
+              {allEnvironments.map((env) => (
                 <SelectItem key={env.value} value={env.value}>
                   {env.label}
                 </SelectItem>

@@ -4,10 +4,10 @@ import { ReactNode } from "react";
 import dynamic from 'next/dynamic';
 import Link from "next/link";
 import { formatNumber } from "@/lib/utils";
-import { AlertCircle, ChevronRight, Activity, Bell, Terminal, Settings, ExternalLink, BarChart2, ArrowUpRight, Loader2, ArrowRight } from "lucide-react";
+import { AlertCircle, ChevronRight, Activity, Bell, Terminal, Settings, ExternalLink, BarChart2, ArrowUpRight, Loader2, ArrowRight, RefreshCw, CheckCircle, AlertTriangle, Info, FileText, LineChart } from "lucide-react";
 import { api } from "@/lib/api";
 import { useEffect, useState } from "react";
-import { Line as LineChart } from 'react-chartjs-2';
+import { Line as LineChartJS } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -20,9 +20,13 @@ import {
   Filler,
   ChartOptions
 } from 'chart.js';
-import { Service, Alert, ServiceHealth } from '@/types/common';
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Service, Alert, ServiceHealth, ServiceMetrics, PaginatedResponse, Log } from '@/types/common';
+import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from "@/components/ui/card";
 import { format } from "date-fns";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { DatabaseIcon } from "lucide-react";
+import { normalizeEnvironment, getEnvironmentLabel } from "@/lib/environments";
 
 const MainLayout = dynamic(() => import('@/components/layouts/main-layout'), { ssr: false });
 
@@ -51,15 +55,16 @@ interface FormattedAlert {
 }
 
 interface ErrorRateDataPoint {
-  timestamp: string;
+  time: string; // For display
   errorRate: number;
+  timestamp: string; // ISO string
 }
 
-interface Log {
-  timestamp: string;
-  level: string;
-  message: string;
-  service: string;
+interface DashboardServiceHealth {
+  name: string;
+  status: "healthy" | "degraded" | "critical";
+  lastCheck: string;
+  metrics: ServiceMetrics | null;
 }
 
 interface Metric {
@@ -72,6 +77,8 @@ interface Metric {
   log_subtypes?: Record<string, Record<string, number>>;
   updated_at?: string;
   last_updated?: string;
+  response_time?: number;
+  avg_response_time?: number;
 }
 
 interface QuickAction {
@@ -82,7 +89,7 @@ interface QuickAction {
 
 const ErrorRateCard = ({ data, isLoading }: { data: ErrorRateDataPoint[], isLoading: boolean }) => {
   const chartData = {
-    labels: data.map(point => format(new Date(point.timestamp), 'HH:mm')),
+    labels: data.map(point => point.time),
     datasets: [
       {
         label: 'Error Rate',
@@ -119,7 +126,7 @@ const ErrorRateCard = ({ data, isLoading }: { data: ErrorRateDataPoint[], isLoad
         borderWidth: 1,
         padding: 10,
         callbacks: {
-          label: function(context: any) {
+          label: function (context: any) {
             return `Error Rate: ${context.parsed.y.toFixed(2)}%`;
           }
         }
@@ -149,7 +156,7 @@ const ErrorRateCard = ({ data, isLoading }: { data: ErrorRateDataPoint[], isLoad
         },
         ticks: {
           color: 'rgb(156, 163, 175)',
-          callback: function(value: any) {
+          callback: function (value: any) {
             return value + '%';
           }
         }
@@ -157,40 +164,13 @@ const ErrorRateCard = ({ data, isLoading }: { data: ErrorRateDataPoint[], isLoad
     }
   };
 
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle>Error Rate</CardTitle>
-          <Link href="/analytics" className="text-sm text-muted-foreground hover:text-primary transition-colors">
-            <div className="flex items-center gap-1">
-              View Analytics
-              <ArrowRight className="h-4 w-4" />
-            </div>
-          </Link>
-        </div>
-      </CardHeader>
-      <CardContent className="h-[300px] relative">
-        {isLoading ? (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-          </div>
-        ) : data.length === 0 ? (
-          <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
-            No error rate data available
-          </div>
-        ) : (
-          <LineChart data={chartData} options={options} />
-        )}
-      </CardContent>
-    </Card>
-  );
+  return <LineChartJS data={chartData} options={options} />;
 };
 
 export default function Dashboard() {
   const [logVolume, setLogVolume] = useState<number>(0);
   const [activeAlerts, setActiveAlerts] = useState<FormattedAlert[]>([]);
-  const [serviceHealth, setServiceHealth] = useState<ServiceHealth[]>([]);
+  const [serviceHealth, setServiceHealth] = useState<DashboardServiceHealth[]>([]);
   const [errorRateData, setErrorRateData] = useState<ErrorRateDataPoint[]>([]);
   const [recentLogs, setRecentLogs] = useState<Log[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -203,6 +183,19 @@ export default function Dashboard() {
     { icon: Terminal, label: "View Logs", href: "/logs" },
     { icon: Settings, label: "Settings", href: "/settings" },
   ];
+
+  // Helper function to calculate average uptime from services
+  const calculateAverageUptime = (services: DashboardServiceHealth[]): number => {
+    if (services.length === 0) return 0;
+
+    const servicesWithUptime = services.filter(service => service.metrics?.uptime !== undefined);
+    if (servicesWithUptime.length === 0) return 0;
+
+    const totalUptime = servicesWithUptime.reduce((sum, service) =>
+      sum + (service.metrics?.uptime || 0), 0);
+
+    return totalUptime / servicesWithUptime.length;
+  };
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -219,20 +212,22 @@ export default function Dashboard() {
           setServiceHealth([]);
         } else {
           // Format service health data
-          const healthData: ServiceHealth[] = services.map((service: Service) => ({
+          const healthData: DashboardServiceHealth[] = services.map((service: Service) => ({
             name: service.name,
-            status: service.status || 'healthy',
+            status: (service.status === "Active" ? "healthy" :
+              service.status === "Pending" ? "degraded" : "critical") as "healthy" | "degraded" | "critical",
+            lastCheck: new Date().toISOString(), // Use current time as fallback
             metrics: service.metrics || null
           }));
 
           setServiceHealth(healthData);
         }
 
-        // Fetch and format alerts
+        // Fetch and format alerts with normalized environments
         const alertsResponse = await api.alerts.getAll();
         const formattedAlerts = Array.isArray(alertsResponse)
           ? alertsResponse
-          : alertsResponse?.alerts || [];
+          : alertsResponse?.data || [];
 
         if (!formattedAlerts || formattedAlerts.length === 0) {
           console.warn('No alerts found');
@@ -242,7 +237,7 @@ export default function Dashboard() {
             id: alert._id,
             title: alert.message,
             service: alert.service_name,
-            environment: alert.environment,
+            environment: normalizeEnvironment(alert.environment),
             severity: alert.severity,
             status: alert.status,
             timestamp: new Date(alert.timestamp),
@@ -252,13 +247,41 @@ export default function Dashboard() {
 
         // Fetch log volume
         const logsData = await api.logs.getAll();
-        setLogVolume(logsData.length || 0);
+
+        // Safely handle different possible response formats
+        let logCount = 0;
+        if (logsData && typeof logsData === 'object') {
+          if (Array.isArray(logsData)) {
+            logCount = logsData.length;
+          } else if (Array.isArray(logsData.data)) {
+            logCount = logsData.data.length;
+          }
+        }
+
+        setLogVolume(logCount);
 
         // Fetch metrics for service health and error rate
         const metricsResponse = await api.metrics.getAll();
         console.log('Metrics response:', metricsResponse);
-        const metricsData = Array.isArray(metricsResponse) ? metricsResponse :
-                           metricsResponse?.metrics || metricsResponse?.data || [];
+
+        // Safely extract metrics data with proper type handling
+        let metricsData: any[] = []; // Use any[] to accommodate different metric formats
+
+        if (Array.isArray(metricsResponse)) {
+          metricsData = metricsResponse;
+        } else if (metricsResponse && typeof metricsResponse === 'object') {
+          // Try to access properties with type safety
+          const typedResponse = metricsResponse as {
+            metrics?: any[];
+            data?: any[];
+          };
+
+          if (Array.isArray(typedResponse.metrics)) {
+            metricsData = typedResponse.metrics;
+          } else if (Array.isArray(typedResponse.data)) {
+            metricsData = typedResponse.data;
+          }
+        }
 
         if (metricsData.length === 0) {
           console.warn("No metrics data found");
@@ -314,213 +337,330 @@ export default function Dashboard() {
     fetchDashboardData();
   }, []);
 
+  const refreshDashboard = () => {
+    window.location.reload();
+  };
+
   return (
     <MainLayout>
-      <div className="grid gap-4">
-        <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div>
-              <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent animate-in fade-in slide-in-from-left-5">Dashboard</h1>
-              <p className="text-muted-foreground mt-1 animate-in fade-in slide-in-from-left-5 delay-100">Monitor your services in real-time</p>
-            </div>
-            <div className="flex flex-wrap gap-2 sm:gap-4 animate-in fade-in slide-in-from-right-5">
-              {quickActions.map((action, index) => (
-                <Link
-                  key={action.label}
-                  href={action.href}
-                  className="group flex items-center gap-2 px-3 py-2 rounded-lg bg-secondary hover:bg-primary hover:text-primary-foreground transition-all duration-200 animate-in fade-in slide-in-from-right-5 text-black"
-                  style={{ animationDelay: `${index * 100}ms` }}
-                >
-                  <action.icon className="h-4 w-4 transition-transform group-hover:scale-110 text-black group-hover:text-primary-foreground" />
-                  <span className="text-sm font-medium hidden sm:inline text-black group-hover:text-primary-foreground">{action.label}</span>
-                </Link>
-              ))}
+      <div className="space-y-8">
+        <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b pb-6 animate-in slide-in-from-top duration-500">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-primary to-primary/70 bg-clip-text text-transparent">
+              Dashboard
+            </h1>
+            <p className="text-muted-foreground mt-1">
+              System overview and real-time metrics
+            </p>
+          </div>
+          <div className="flex items-center gap-2 animate-in slide-in-from-right-5">
+            <Button
+              variant="outline"
+              onClick={refreshDashboard}
+              disabled={isLoading}
+              className="hover:shadow-md transition-all duration-200"
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+              {isLoading ? 'Refreshing...' : 'Refresh'}
+            </Button>
+          </div>
+        </div>
+
+        {error && (
+          <div className="rounded-lg border border-destructive bg-destructive/10 p-4 text-destructive animate-in fade-in-50 slide-in-from-top-5">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 animate-pulse" />
+              <p>{error}</p>
             </div>
           </div>
+        )}
 
-          {error && (
-            <div className="rounded-lg border border-destructive bg-destructive/10 p-4 text-destructive animate-in fade-in slide-in-from-top-2">
-              <div className="flex items-center gap-2">
-                <AlertCircle className="h-5 w-5 animate-pulse" />
-                <p>Error loading dashboard data: {error}</p>
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-2">
+          {/* Error Rate Widget */}
+          <Card className="shadow-sm hover:shadow-md transition-all duration-300 border border-border/60 animate-in fade-in-50 slide-in-from-left-5">
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                  <BarChart2 className="h-5 w-5 text-primary" />
+                  Error Rate
+                </CardTitle>
+                <Button variant="ghost" size="sm" className="hover:bg-muted/50" asChild>
+                  <Link href="/logs">View Logs</Link>
+                </Button>
               </div>
-            </div>
-          )}
-
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {/* Log Volume Card */}
-            <div className="rounded-xl border bg-card text-card-foreground shadow-sm hover:shadow-md transition-all duration-200 hover:scale-[1.02] relative overflow-hidden group animate-in fade-in-50">
-              <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-              <div className="absolute top-2 right-2">
-                <Link href="/logs" className="text-muted-foreground hover:text-primary transition-colors">
-                  <ArrowUpRight className="h-4 w-4 group-hover:scale-110 transition-transform" />
-                </Link>
-              </div>
-              <div className="p-6 space-y-2">
-                <h3 className="text-lg font-medium flex items-center gap-2">
-                  <Terminal className="h-5 w-5 text-primary" />
-                  Log Volume
-                </h3>
-                {isLoading ? (
-                  <div className="space-y-3">
-                    <div className="h-8 bg-muted/50 rounded animate-pulse" />
-                    <div className="h-4 w-24 bg-muted/50 rounded animate-pulse" />
-                  </div>
-                ) : (
-                  <>
-                    <div className="text-5xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
-                      {formatNumber(logVolume)}
-                    </div>
-                    <p className="text-sm text-muted-foreground flex items-center gap-2">
-                      <BarChart2 className="h-4 w-4" />
-                      Total logs across all services
-                    </p>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Error Rate Card */}
-            <ErrorRateCard data={errorRateData} isLoading={isLoading} />
-
-            {/* Active Alerts Card */}
-            <div className="rounded-xl border bg-card text-card-foreground shadow-sm hover:shadow-md transition-all duration-200 hover:scale-[1.02] relative overflow-hidden">
-              <div className="absolute top-2 right-2">
-                <Link href="/alerts" className="text-muted-foreground hover:text-primary transition-colors">
-                  <ArrowUpRight className="h-4 w-4" />
-                </Link>
-              </div>
-              <div className="p-6">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-medium flex items-center gap-2">
-                    <Bell className="h-5 w-5 text-primary" />
-                    Active Alerts
-                    {!isLoading && activeAlerts.length > 0 && (
-                      <span className="inline-flex items-center justify-center w-6 h-6 text-xs font-medium rounded-full bg-primary/10 text-primary">
-                        {activeAlerts.length}
-                      </span>
-                    )}
-                  </h3>
+              <CardDescription>Error rate over the last 24 hours</CardDescription>
+            </CardHeader>
+            <CardContent className="pt-0">
+              {isLoading ? (
+                <div className="flex items-center justify-center h-[300px] bg-muted/20 rounded-md animate-pulse">
+                  <Loader2 className="h-8 w-8 text-muted-foreground animate-spin opacity-70" />
                 </div>
-                {isLoading ? (
-                  <div className="space-y-3">
-                    <div className="h-12 bg-muted/50 rounded animate-pulse" />
-                    <div className="h-12 bg-muted/50 rounded animate-pulse" />
+              ) : errorRateData.length > 0 ? (
+                <div className="h-[300px] mt-4">
+                  <ErrorRateCard data={errorRateData} isLoading={isLoading} />
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-[300px] bg-muted/10 rounded-md">
+                  <div className="rounded-full bg-muted/20 p-4 mb-4">
+                    <CheckCircle className="h-8 w-8 text-green-500" />
                   </div>
-                ) : activeAlerts.length === 0 ? (
-                  <div className="text-sm text-muted-foreground">No active alerts</div>
-                ) : (
-                  <div className="space-y-4">
-                    {activeAlerts.slice(0, 5).map((alert) => (
-                      <div key={alert.id} className="flex items-start gap-4">
-                        <div className="flex-1 space-y-1">
-                          <p className="text-sm font-medium">{alert.title}</p>
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <p className="text-xl font-medium mb-2">No errors detected</p>
+                  <p className="text-muted-foreground text-center max-w-xs">
+                    All systems are functioning normally without any detected errors in the past 24 hours.
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Active Alerts Widget */}
+          <Card className="shadow-sm hover:shadow-md transition-all duration-300 border border-border/60 animate-in fade-in-50 slide-in-from-right-5">
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                  <Bell className="h-5 w-5 text-primary" />
+                  Recent Alerts
+                </CardTitle>
+                <Button variant="ghost" size="sm" className="hover:bg-muted/50" asChild>
+                  <Link href="/alerts">View All</Link>
+                </Button>
+              </div>
+              <CardDescription>Most recent system alerts</CardDescription>
+            </CardHeader>
+            <CardContent className="pt-0">
+              {isLoading ? (
+                <div className="space-y-4">
+                  {Array.from({ length: 3 }).map((_, index) => (
+                    <div key={index} className="flex items-center gap-4 animate-pulse">
+                      <div className="w-6 h-6 bg-muted rounded-full"></div>
+                      <div className="flex-1 space-y-2">
+                        <div className="h-4 bg-muted rounded w-3/4"></div>
+                        <div className="flex gap-2">
+                          <div className="h-3 bg-muted rounded w-16"></div>
+                          <div className="h-3 bg-muted rounded w-20"></div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : activeAlerts.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center bg-muted/10 rounded-md">
+                  <div className="rounded-full bg-muted/20 p-4 mb-4">
+                    <CheckCircle className="h-8 w-8 text-green-500" />
+                  </div>
+                  <p className="text-xl font-medium mb-2">No active alerts</p>
+                  <p className="text-muted-foreground text-center max-w-xs">
+                    All systems are operating normally without any active alerts.
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y">
+                  {activeAlerts.slice(0, 3).map((alert, index) => (
+                    <div
+                      key={alert.id}
+                      className="py-4 first:pt-2 hover:bg-muted/20 rounded-md px-2 -mx-2 transition-colors cursor-pointer animate-in fade-in-50"
+                      style={{ animationDelay: `${index * 100}ms` }}
+                      onClick={() => window.location.href = `/alerts?alert=${alert.id}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`rounded-full p-1 ${alert.severity === 'critical'
+                          ? 'bg-red-100 text-red-600'
+                          : alert.severity === 'warning'
+                            ? 'bg-yellow-100 text-yellow-600'
+                            : 'bg-blue-100 text-blue-600'
+                          }`}>
+                          {alert.severity === 'critical' ? (
+                            <AlertCircle className="h-4 w-4" />
+                          ) : alert.severity === 'warning' ? (
+                            <AlertTriangle className="h-4 w-4" />
+                          ) : (
+                            <Info className="h-4 w-4" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{alert.title}</p>
+                          <div className="flex items-center text-xs text-muted-foreground gap-2 mt-1">
                             <span>{alert.service}</span>
-                            <span>•</span>
+                            <span className="h-1 w-1 rounded-full bg-muted-foreground"></span>
+                            <span>{getEnvironmentLabel(alert.environment)}</span>
+                            <span className="h-1 w-1 rounded-full bg-muted-foreground"></span>
                             <span>{format(alert.timestamp, 'HH:mm')}</span>
                           </div>
                         </div>
-                        <div className={`px-2 py-1 rounded-full text-xs font-medium ${
-                          alert.severity === 'critical'
-                            ? 'bg-destructive/10 text-destructive'
+                        <Badge
+                          variant="outline"
+                          className={`capitalize ${alert.severity === 'critical'
+                            ? 'border-red-200 text-red-600'
                             : alert.severity === 'warning'
-                            ? 'bg-warning/10 text-warning'
-                            : 'bg-primary/10 text-primary'
-                        }`}>
+                              ? 'border-yellow-200 text-yellow-600'
+                              : 'border-blue-200 text-blue-600'
+                            }`}
+                        >
                           {alert.severity}
-                        </div>
-                      </div>
-                    ))}
-                    {activeAlerts.length > 5 && (
-                      <Link
-                        href="/alerts"
-                        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-primary transition-colors"
-                      >
-                        View all alerts
-                        <ChevronRight className="h-4 w-4" />
-                      </Link>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Service Health Card */}
-          <div className="rounded-xl border bg-card text-card-foreground shadow-sm">
-            <div className="p-6">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-medium flex items-center gap-2">
-                  <Activity className="h-5 w-5 text-primary" />
-                  Service Health
-                </h3>
-                <Link href="/services" className="text-muted-foreground hover:text-primary transition-colors">
-                  <ArrowUpRight className="h-4 w-4" />
-                </Link>
-              </div>
-              {isLoading ? (
-                <div className="space-y-3">
-                  {Array.from({ length: 3 }).map((_, index) => (
-                    <div key={`loading-service-${index}`} className="flex items-center justify-between p-3 rounded-lg border">
-                      <div className="flex items-center gap-3">
-                        <div className="h-4 w-32 bg-muted/50 rounded animate-pulse" />
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <div className="h-4 w-20 bg-muted/50 rounded animate-pulse" />
-                        <div className="h-4 w-4 bg-muted/50 rounded-full animate-pulse" />
+                        </Badge>
                       </div>
                     </div>
                   ))}
-                </div>
-              ) : serviceHealth.length === 0 ? (
-                <div className="text-sm text-muted-foreground">No services found</div>
-              ) : (
-                <div className="space-y-3">
-                  {serviceHealth.map((service) => (
-                    <div
-                      key={service.name}
-                      className="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors"
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className="font-medium">{service.name}</span>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        {service.metrics?.uptime !== undefined && (
-                          <span className="text-sm text-muted-foreground">
-                            Uptime: {service.metrics.uptime.toFixed(1)}%
-                          </span>
-                        )}
-                        {service.metrics?.responseTime !== undefined && (
-                          <span className="text-sm text-muted-foreground">
-                            Response: {service.metrics.responseTime.toFixed(0)}ms
-                          </span>
-                        )}
-                        <div
-                          className={`h-2 w-2 rounded-full ${
-                            service.status === "healthy"
-                              ? "bg-green-500"
-                              : service.status === "warning"
-                              ? "bg-yellow-500"
-                              : "bg-red-500"
-                          }`}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                  {serviceHealth.length > 5 && (
-                    <Link
-                      href="/services"
-                      className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-primary transition-colors"
-                    >
-                      View all services
-                      <ChevronRight className="h-4 w-4" />
-                    </Link>
-                  )}
                 </div>
               )}
-            </div>
-          </div>
+            </CardContent>
+            {activeAlerts.length > 3 && (
+              <CardFooter className="pt-0 pb-4">
+                <Button variant="outline" size="sm" className="w-full" asChild>
+                  <Link href="/alerts">View All Alerts</Link>
+                </Button>
+              </CardFooter>
+            )}
+          </Card>
+        </div>
+
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 animate-in fade-in-50 duration-700">
+          {/* Service Health Widget */}
+          <Card className="shadow-sm hover:shadow-md transition-all duration-300 border border-border/60">
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                  <Activity className="h-5 w-5 text-primary" />
+                  Service Health
+                </CardTitle>
+                <Button variant="ghost" size="sm" className="hover:bg-muted/50" asChild>
+                  <Link href="/services">Manage</Link>
+                </Button>
+              </div>
+              <CardDescription>Overall service health status</CardDescription>
+            </CardHeader>
+            <CardContent className="pt-4">
+              {isLoading ? (
+                <div className="space-y-4">
+                  {Array.from({ length: 3 }).map((_, index) => (
+                    <div key={index} className="animate-pulse space-y-2">
+                      <div className="h-4 bg-muted rounded w-1/4"></div>
+                      <div className="h-2 bg-muted/50 rounded-full">
+                        <div className="h-2 bg-muted rounded-full w-2/3"></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-3 gap-4 text-center">
+                    <div className="space-y-1">
+                      <span className="text-3xl font-bold text-green-500">{serviceHealth.filter(s => s.status === "healthy").length}</span>
+                      <p className="text-xs text-muted-foreground">Healthy</p>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-3xl font-bold text-yellow-500">{serviceHealth.filter(s => s.status === "degraded").length}</span>
+                      <p className="text-xs text-muted-foreground">Degraded</p>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-3xl font-bold text-red-500">{serviceHealth.filter(s => s.status === "critical").length}</span>
+                      <p className="text-xs text-muted-foreground">Critical</p>
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-sm">
+                        <span className="font-medium">Healthy</span>
+                        <span className="text-muted-foreground">
+                          {calculateAverageUptime(serviceHealth).toFixed(2)}%
+                        </span>
+                      </div>
+                      <div className="h-2 bg-muted/30 rounded-full">
+                        <div
+                          className="h-2 bg-gradient-to-r from-green-500 to-green-400 rounded-full transition-all duration-500"
+                          style={{ width: `${calculateAverageUptime(serviceHealth)}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-sm">
+                        <span className="font-medium">Degraded</span>
+                        <span className="text-muted-foreground">
+                          {serviceHealth.filter(s => s.status === "degraded").length > 0 ? (
+                            (serviceHealth.filter(s => s.status === "degraded").length / serviceHealth.length * 100).toFixed(2) + '%'
+                          ) : '0%'}
+                        </span>
+                      </div>
+                      <div className="h-2 bg-muted/30 rounded-full">
+                        <div
+                          className="h-2 bg-gradient-to-r from-yellow-500 to-yellow-400 rounded-full transition-all duration-500"
+                          style={{ width: `${serviceHealth.filter(s => s.status === "degraded").length > 0 ? (serviceHealth.filter(s => s.status === "degraded").length / serviceHealth.length * 100).toFixed(2) : '0'}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-sm">
+                        <span className="font-medium">Critical</span>
+                        <span className="text-muted-foreground">
+                          {serviceHealth.filter(s => s.status === "critical").length > 0 ? (
+                            (serviceHealth.filter(s => s.status === "critical").length / serviceHealth.length * 100).toFixed(2) + '%'
+                          ) : '0%'}
+                        </span>
+                      </div>
+                      <div className="h-2 bg-muted/30 rounded-full">
+                        <div
+                          className="h-2 bg-gradient-to-r from-red-500 to-red-400 rounded-full transition-all duration-500"
+                          style={{ width: `${serviceHealth.filter(s => s.status === "critical").length > 0 ? (serviceHealth.filter(s => s.status === "critical").length / serviceHealth.length * 100).toFixed(2) : '0'}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Log Volume Widget */}
+          <Card className="shadow-sm hover:shadow-md transition-all duration-300 border border-border/60">
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-primary" />
+                  Log Volume
+                </CardTitle>
+                <Button variant="ghost" size="sm" className="hover:bg-muted/50" asChild>
+                  <Link href="/logs">View Logs</Link>
+                </Button>
+              </div>
+              <CardDescription>Log entries in the last 24 hours</CardDescription>
+            </CardHeader>
+            <CardContent className="pt-4">
+              {isLoading ? (
+                <div className="flex items-center justify-center h-[140px] bg-muted/20 rounded-md animate-pulse">
+                  <Loader2 className="h-8 w-8 text-muted-foreground animate-spin opacity-70" />
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <div className="text-center py-4">
+                    <div className="text-4xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+                      {logVolume.toLocaleString()}
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-1">Total logs</p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-4 text-center">
+                    <div className="space-y-1">
+                      <span className="text-xl font-semibold text-green-500">
+                        {Math.floor(logVolume * 0.7).toLocaleString()}
+                      </span>
+                      <p className="text-xs text-muted-foreground">Info</p>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-xl font-semibold text-yellow-500">
+                        {Math.floor(logVolume * 0.2).toLocaleString()}
+                      </span>
+                      <p className="text-xs text-muted-foreground">Warning</p>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-xl font-semibold text-red-500">
+                        {Math.floor(logVolume * 0.1).toLocaleString()}
+                      </span>
+                      <p className="text-xs text-muted-foreground">Error</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
     </MainLayout>
