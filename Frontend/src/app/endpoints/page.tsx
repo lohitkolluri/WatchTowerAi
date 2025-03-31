@@ -53,6 +53,7 @@ import {
 import { ArrowUpDown } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useEnvironments, normalizeEnvironment, getEnvironmentLabel } from "@/lib/environments";
+import { Label } from "@/components/ui/label";
 
 // Define TypeScript interfaces for better type safety
 interface Endpoint {
@@ -133,7 +134,8 @@ export default function EndpointsPage() {
     allEnvironments,
     customEnvironments,
     addEnvironment,
-    removeEnvironment
+    removeEnvironment,
+    setCustomEnvironments
   } = useEnvironments();
   const [environments, setEnvironments] = useState<string[]>([]);
   const [services, setServices] = useState<string[]>([]);
@@ -144,9 +146,22 @@ export default function EndpointsPage() {
     direction: 'asc' | 'desc';
   }>({ key: 'name', direction: 'asc' });
   const [showEnvironmentModal, setShowEnvironmentModal] = useState(false);
-  const [newEnvironment, setNewEnvironment] = useState("");
+  const [newEnvironment, setNewEnvironment] = useState('');
+  const [duplicateError, setDuplicateError] = useState('');
+  const [newlyAddedEnvs, setNewlyAddedEnvs] = useState<string[]>([]);
 
-  // Function to fetch and format endpoints
+  // Add a separate useEffect to handle successMessage changes
+  useEffect(() => {
+    if (successMessage) {
+      // Clear success message after a short delay
+      const timer = setTimeout(() => {
+        setSuccessMessage(null);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [successMessage]);
+
+  // Keep fetchEndpoints without successMessage dependency
   const fetchEndpoints = useCallback(async (isManualRefresh = false) => {
     try {
       if (isManualRefresh) {
@@ -156,19 +171,20 @@ export default function EndpointsPage() {
       }
       setError(null);
 
-      // Clear success message if it exists
-      if (successMessage) {
-        setSuccessMessage(null);
-      }
-
       const response = await endpointService.getAllEndpoints();
 
       // Format endpoint data with normalized environments
-      const formattedEndpoints = response.map((endpoint: any) => ({
-        ...endpoint,
-        environment: normalizeEnvironment(endpoint.environment),
-        status: endpoint.status || "active",
-      }));
+      const formattedEndpoints = response
+        .filter(endpoint => endpoint._id) // Filter out endpoints with missing IDs
+        .map((endpoint: any) => ({
+          ...endpoint,
+          id: endpoint._id, // Ensure ID is properly set
+          environment: normalizeEnvironment(endpoint.environment),
+          status: endpoint.status || "active",
+          lastChecked: endpoint.last_checked
+            ? new Date(endpoint.last_checked)
+            : new Date() // Use current date as fallback if last_checked is not available
+        }));
 
       setEndpoints(formattedEndpoints);
 
@@ -190,11 +206,18 @@ export default function EndpointsPage() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [successMessage]);
+  }, []); // No dependency on successMessage
 
   // Ping a single endpoint
   const pingEndpoint = async (id: string, url: string) => {
     try {
+      // Validate that the ID exists and is not empty
+      if (!id || id.trim() === '') {
+        console.error("Cannot ping endpoint: ID is missing or empty");
+        toast.error("Cannot ping endpoint: Invalid endpoint ID");
+        return false;
+      }
+
       await endpointService.pingEndpoint(id);
       setMonitoringState(prev => ({
         ...prev,
@@ -220,7 +243,11 @@ export default function EndpointsPage() {
   // Ping all endpoints
   const pingAllEndpoints = async () => {
     const results = await Promise.all(
-      endpoints.map(endpoint => pingEndpoint(endpoint.id, endpoint.url))
+      endpoints.map(endpoint => {
+        // Skip endpoints with missing IDs
+        if (!endpoint.id) return false;
+        return pingEndpoint(endpoint.id, endpoint.url);
+      })
     );
     return results.every(result => result);
   };
@@ -231,10 +258,13 @@ export default function EndpointsPage() {
       clearInterval(monitoringInterval);
     }
 
-    // Set active state for all endpoints
+    // Filter out endpoints with missing IDs
+    const validEndpoints = endpoints.filter(endpoint => endpoint.id && endpoint.id.trim() !== '');
+
+    // Set active state for all valid endpoints
     setMonitoringState(prev => {
       const newState = { ...prev };
-      endpoints.forEach(endpoint => {
+      validEndpoints.forEach(endpoint => {
         newState[endpoint.id] = {
           ...newState[endpoint.id],
           isActive: true
@@ -249,7 +279,7 @@ export default function EndpointsPage() {
     }, 60000); // Check every minute
 
     setMonitoringInterval(interval);
-  }, [endpoints, monitoringInterval]);
+  }, [endpoints]); // Remove monitoringInterval from dependency array to break the cycle
 
   // Stop monitoring a specific endpoint
   const stopMonitoring = (id: string) => {
@@ -263,7 +293,14 @@ export default function EndpointsPage() {
   };
 
   // Toggle monitoring for a specific endpoint
-  const toggleMonitoring = (id: string, url: string) => {
+  const toggleMonitoring = (id: string | undefined, url: string) => {
+    // Validate ID before proceeding
+    if (!id || id.trim() === '') {
+      console.error("Cannot toggle monitoring: ID is missing or empty");
+      toast.error("Cannot monitor this endpoint: Invalid endpoint ID");
+      return;
+    }
+
     const isCurrentlyActive = monitoringState[id]?.isActive || false;
 
     if (isCurrentlyActive) {
@@ -316,12 +353,26 @@ export default function EndpointsPage() {
   // Start monitoring active endpoints when endpoints are loaded
   useEffect(() => {
     if (endpoints.length > 0) {
-      const hasActiveEndpoints = Object.values(monitoringState).some(state => state.isActive);
+      // Filter out any endpoints that don't have valid IDs
+      const validEndpoints = endpoints.filter(endpoint => endpoint.id && endpoint.id.trim() !== '');
+
+      // Check if any of the valid endpoints should be actively monitored
+      const hasActiveEndpoints = validEndpoints.some(endpoint =>
+        monitoringState[endpoint.id]?.isActive
+      );
+
       if (hasActiveEndpoints) {
         startMonitoring();
       }
     }
   }, [endpoints, startMonitoring]);
+
+  // Update the endpoints array when filters change
+  useEffect(() => {
+    // Only fetch when filters or search actually change, not on initial render
+    if (isLoading) return;
+    fetchEndpoints();
+  }, [filters, searchQuery, fetchEndpoints]);
 
   // Initial fetch of endpoints
   useEffect(() => {
@@ -334,12 +385,7 @@ export default function EndpointsPage() {
 
     // Cleanup on unmount
     return () => clearInterval(intervalId);
-  }, [fetchEndpoints]);
-
-  // Update the endpoints array when filters change
-  useEffect(() => {
-    fetchEndpoints();
-  }, [filters, searchQuery, fetchEndpoints]);
+  }, [fetchEndpoints]); // Add fetchEndpoints to the dependency array
 
   // Function to handle endpoint registration
   const handleRegisterEndpoint = async (formData: Record<string, any>) => {
@@ -366,8 +412,29 @@ export default function EndpointsPage() {
       // Show success message
       toast.success("Endpoint registered successfully");
 
-      // Refresh the endpoints list
-      await fetchEndpoints();
+      // Instead of calling fetchEndpoints, update the state directly
+      if (newEndpoint && newEndpoint.endpoint) {
+        const formattedEndpoint = {
+          id: newEndpoint.endpoint._id,
+          name: newEndpoint.endpoint.name,
+          url: newEndpoint.endpoint.url,
+          service: newEndpoint.endpoint.service,
+          environment: normalizeEnvironment(newEndpoint.endpoint.environment),
+          status: newEndpoint.endpoint.status || "active",
+          lastChecked: new Date()
+        };
+
+        setEndpoints(prev => [...prev, formattedEndpoint]);
+
+        // Update services and environments lists if needed
+        if (formattedEndpoint.service && !services.includes(formattedEndpoint.service)) {
+          setServices(prev => [...prev, formattedEndpoint.service!].sort());
+        }
+
+        if (formattedEndpoint.environment && !environments.includes(formattedEndpoint.environment)) {
+          setEnvironments(prev => [...prev, formattedEndpoint.environment!].sort());
+        }
+      }
 
       // Close the modal
       setShowRegisterModal(false);
@@ -375,7 +442,21 @@ export default function EndpointsPage() {
       // Start monitoring the new endpoint after a short delay to ensure registration is complete
       if (newEndpoint && newEndpoint.endpoint && newEndpoint.endpoint._id) {
         setTimeout(() => {
-          startMonitoring();
+          // Set the specific endpoint to active state
+          setMonitoringState(prev => ({
+            ...prev,
+            [newEndpoint.endpoint._id]: {
+              ...prev[newEndpoint.endpoint._id],
+              isActive: true
+            }
+          }));
+
+          // Try to ping the endpoint
+          try {
+            endpointService.pingEndpoint(newEndpoint.endpoint._id);
+          } catch (error) {
+            console.error("Error pinging new endpoint:", error);
+          }
         }, 1000);
       }
 
@@ -480,7 +561,25 @@ export default function EndpointsPage() {
         if (result) {
           const newEndpoint = result.endpoint;
           toast.success("Endpoint updated successfully");
-          fetchEndpoints();  // Refresh the list
+
+          // Instead of calling fetchEndpoints, update the state directly
+          setEndpoints(prevEndpoints => {
+            const updatedEndpoints = prevEndpoints.map(ep => {
+              if (ep.id === selectedEndpoint.id) {
+                return {
+                  ...ep,
+                  name: formData.name,
+                  url: formData.url,
+                  service: formData.service,
+                  environment: normalizeEnvironment(formData.environment),
+                  status: ep.status
+                };
+              }
+              return ep;
+            });
+            return updatedEndpoints;
+          });
+
           setIsEditMode(false);
           setSelectedEndpoint(null);
           setShowRegisterModal(false);
@@ -488,7 +587,11 @@ export default function EndpointsPage() {
           // Start monitoring automatically if enabled
           if (newEndpoint && newEndpoint._id && monitoringState[newEndpoint._id]?.isActive) {
             // Ping this endpoint immediately
-            pingEndpoint(newEndpoint._id, newEndpoint.url);
+            try {
+              await endpointService.pingEndpoint(newEndpoint._id);
+            } catch (error) {
+              console.error("Error pinging endpoint:", error);
+            }
           }
         }
       } else {
@@ -521,28 +624,68 @@ export default function EndpointsPage() {
       : bValue.localeCompare(aValue);
   });
 
+  // Apply filters to the sorted endpoints
+  const filteredEndpoints = sortedEndpoints.filter(endpoint => {
+    // Filter by search query
+    const matchesSearch = searchQuery
+      ? endpoint.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      endpoint.url.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (endpoint.service && endpoint.service.toLowerCase().includes(searchQuery.toLowerCase()))
+      : true;
+
+    // Filter by environment
+    const matchesEnvironment = filters.environment === "all"
+      ? true
+      : endpoint.environment === filters.environment;
+
+    // Filter by service
+    const matchesService = filters.service === "all"
+      ? true
+      : endpoint.service === filters.service;
+
+    // Filter by status
+    const matchesStatus = filters.status === "all"
+      ? true
+      : endpoint.status === filters.status;
+
+    return matchesSearch && matchesEnvironment && matchesService && matchesStatus;
+  });
+
   // Update handleAddEnvironment to use our hook function
   const handleAddEnvironment = () => {
-    if (!newEnvironment.trim()) return;
-    addEnvironment(newEnvironment);
-    setNewEnvironment("");
-    toast.success(`Added new environment: ${getEnvironmentLabel(newEnvironment)}`);
+    // Trim the new environment and normalize to lowercase
+    const cleanedEnv = newEnvironment.trim();
+    const normalizedEnv = cleanedEnv.toLowerCase();
+
+    if (cleanedEnv === '') {
+      setDuplicateError('Environment name cannot be empty');
+      return;
+    }
+
+    // Check if the environment already exists
+    const existingEnvs = allEnvironments.map(env => env.value.toLowerCase());
+    if (existingEnvs.includes(normalizedEnv) ||
+      customEnvironments.map(env => env.toLowerCase()).includes(normalizedEnv)) {
+      setDuplicateError(`Environment "${cleanedEnv}" already exists`);
+      return;
+    }
+
+    setCustomEnvironments([...customEnvironments, cleanedEnv]);
+    setNewlyAddedEnvs([...newlyAddedEnvs, cleanedEnv]);
+    setNewEnvironment('');
+    setDuplicateError('');
   };
 
   // Update handleRemoveEnvironment to use our hook function
   const handleRemoveEnvironment = (env: string) => {
-    try {
-      removeEnvironment(env);
-      toast.success(`Removed environment: ${getEnvironmentLabel(env)}`);
-    } catch (error) {
-      toast.error("Failed to remove environment");
-    }
+    setCustomEnvironments(customEnvironments.filter(e => e !== env));
+    setNewlyAddedEnvs(newlyAddedEnvs.filter(e => e !== env));
   };
 
   // Get all distinct environments from endpoints and add standard ones
   const uniqueEnvironments = Array.from(new Set([
     ...environments,
-    ...(sortedEndpoints.map((e: Endpoint) => e.environment?.toLowerCase() || 'production'))
+    ...(endpoints.map((e: Endpoint) => e.environment?.toLowerCase() || 'production'))
   ])).sort();
 
   // Format environments for display with proper capitalization
@@ -558,66 +701,128 @@ export default function EndpointsPage() {
 
   // Environment management dialog
   const environmentDialogContent = (
-    <DialogContent className="sm:max-w-md">
+    <DialogContent className="sm:max-w-md shadow-xl border">
       <DialogHeader>
-        <DialogTitle>Manage Environments</DialogTitle>
+        <DialogTitle className="text-xl">Manage Environments</DialogTitle>
         <DialogDescription>
           Add or remove custom environments for your endpoints.
         </DialogDescription>
       </DialogHeader>
 
-      <div className="space-y-4 py-4">
-        <div className="flex items-center gap-2">
-          <Input
-            placeholder="Add new environment..."
-            value={newEnvironment}
-            onChange={(e) => setNewEnvironment(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                handleAddEnvironment();
-              }
-            }}
-          />
-          <Button onClick={handleAddEnvironment} type="button">
-            <PlusCircle className="h-4 w-4" />
-          </Button>
-        </div>
-
-        <div className="space-y-1 max-h-[300px] overflow-y-auto pr-2">
-          <div className="font-medium text-sm text-muted-foreground mb-2">Standard Environments</div>
-          {allEnvironments
-            .filter(env => !customEnvironments.includes(env.value))
-            .map((env) => (
-              <div key={env.value} className="flex items-center justify-between py-2 px-3 rounded-md bg-muted/50">
-                <span className="text-sm font-medium">{env.label}</span>
-                <Badge variant="outline" className="text-xs">Default</Badge>
-              </div>
-            ))}
-
-          {customEnvironments.length > 0 && (
-            <div className="font-medium text-sm text-muted-foreground mt-4 mb-2">Custom Environments</div>
-          )}
-
-          {customEnvironments.map((env) => (
-            <div key={env} className="flex items-center justify-between py-2 px-3 rounded-md hover:bg-muted/30">
-              <span className="text-sm">{getEnvironmentLabel(env)}</span>
+      <div className="space-y-5 py-4">
+        <div className="space-y-3">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="new-environment">Add New Environment</Label>
+            <div className="flex gap-2 items-center">
+              <Input
+                id="new-environment"
+                placeholder="Enter environment name..."
+                value={newEnvironment}
+                onChange={(e) => {
+                  setNewEnvironment(e.target.value);
+                  setDuplicateError('');
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleAddEnvironment();
+                  }
+                }}
+                className="focus:ring-2 focus:ring-primary/30 transition-all"
+              />
               <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => handleRemoveEnvironment(env)}
-                className="h-8 w-8 p-0"
+                onClick={handleAddEnvironment}
+                className="flex items-center gap-1.5 hover:shadow-md transition-all"
               >
-                <Trash2 className="h-4 w-4 text-destructive" />
+                <PlusCircle className="h-4 w-4" />
+                <span>Add</span>
               </Button>
             </div>
-          ))}
+            {duplicateError && (
+              <p className="text-sm text-destructive">{duplicateError}</p>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-4 max-h-[350px] overflow-y-auto pr-2 border rounded-md p-4 bg-background shadow-sm">
+          <div>
+            <h3 className="font-medium text-sm text-foreground mb-3">Standard Environments</h3>
+            <div className="space-y-2">
+              {allEnvironments
+                .filter(env => !customEnvironments.includes(env.value))
+                .map((env) => (
+                  <div
+                    key={`std-env-${env.value}`}
+                    className="flex items-center justify-between py-2.5 px-3 rounded-md bg-muted/50 border border-border/50 hover:border-border/80 transition-colors"
+                  >
+                    <span className="text-sm font-medium">{env.label}</span>
+                    <Badge variant="outline" className="text-xs font-normal bg-background">
+                      Default
+                    </Badge>
+                  </div>
+                ))}
+            </div>
+          </div>
+
+          {customEnvironments.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <h3 className="font-medium text-sm text-foreground">Custom Environments</h3>
+                <Badge variant="outline" className="text-xs font-normal">
+                  {customEnvironments.length}
+                </Badge>
+              </div>
+              <div className="space-y-2">
+                {customEnvironments.map((env) => (
+                  <div
+                    key={`custom-env-${env}`}
+                    className={`flex items-center justify-between py-2.5 px-3 rounded-md
+                      ${newlyAddedEnvs.includes(env)
+                        ? 'bg-primary/10 border border-primary/30 animate-pulse'
+                        : 'bg-muted/30 border border-border/50'}
+                      hover:bg-muted/50 transition-colors`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">{getEnvironmentLabel(env)}</span>
+                      {newlyAddedEnvs.includes(env) && (
+                        <Badge className="bg-primary/20 text-primary text-xs">NEW</Badge>
+                      )}
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleRemoveEnvironment(env)}
+                      className="h-8 p-0 px-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      <DialogFooter>
-        <Button onClick={() => setShowEnvironmentModal(false)}>
-          Done
+      <DialogFooter className="gap-2 sm:space-x-2">
+        <Button
+          variant="outline"
+          onClick={() => {
+            setShowEnvironmentModal(false);
+            setNewlyAddedEnvs([]);
+          }}
+          className="hover:bg-muted transition-colors"
+        >
+          Cancel
+        </Button>
+        <Button
+          onClick={() => {
+            setShowEnvironmentModal(false);
+            setNewlyAddedEnvs([]);
+          }}
+          className="hover:shadow-md transition-all"
+        >
+          Save Changes
         </Button>
       </DialogFooter>
     </DialogContent>
@@ -655,15 +860,15 @@ export default function EndpointsPage() {
               <div className="flex-1">
                 <Select
                   value={filters.environment}
-                  onValueChange={(value) => setFilters({...filters, environment: value})}
+                  onValueChange={(value) => setFilters({ ...filters, environment: value })}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="All Environments" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Environments</SelectItem>
+                    <SelectItem key="all-environments" value="all">All Environments</SelectItem>
                     {environments.map(env => (
-                      <SelectItem key={env} value={env}>
+                      <SelectItem key={`env-${env}`} value={env}>
                         {getEnvironmentLabel(env)}
                       </SelectItem>
                     ))}
@@ -679,9 +884,9 @@ export default function EndpointsPage() {
                     <SelectValue placeholder="Service" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Services</SelectItem>
+                    <SelectItem key="all-services" value="all">All Services</SelectItem>
                     {services.map(service => (
-                      <SelectItem key={service} value={service}>{service}</SelectItem>
+                      <SelectItem key={`service-${service}`} value={service}>{service}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -695,11 +900,11 @@ export default function EndpointsPage() {
                     <SelectValue placeholder="Status" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Statuses</SelectItem>
-                    <SelectItem value="active">Active</SelectItem>
-                    <SelectItem value="inactive">Inactive</SelectItem>
-                    <SelectItem value="warning">Warning</SelectItem>
-                    <SelectItem value="error">Error</SelectItem>
+                    <SelectItem key="all-statuses" value="all">All Statuses</SelectItem>
+                    <SelectItem key="active-status" value="active">Active</SelectItem>
+                    <SelectItem key="inactive-status" value="inactive">Inactive</SelectItem>
+                    <SelectItem key="warning-status" value="warning">Warning</SelectItem>
+                    <SelectItem key="error-status" value="error">Error</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -746,7 +951,7 @@ export default function EndpointsPage() {
             </TableHeader>
             <TableBody>
               {isLoading ? (
-                <TableRow>
+                <TableRow key="loading-row">
                   <TableCell colSpan={7} className="text-center py-8">
                     <div className="flex justify-center items-center gap-2">
                       <RefreshCw className="h-4 w-4 animate-spin" />
@@ -754,8 +959,8 @@ export default function EndpointsPage() {
                     </div>
                   </TableCell>
                 </TableRow>
-              ) : sortedEndpoints.length === 0 ? (
-                <TableRow>
+              ) : filteredEndpoints.length === 0 ? (
+                <TableRow key="empty-row">
                   <TableCell colSpan={7} className="text-center py-8">
                     <div className="flex flex-col items-center gap-2 text-muted-foreground">
                       <ExternalLink className="h-8 w-8" />
@@ -773,7 +978,7 @@ export default function EndpointsPage() {
                   </TableCell>
                 </TableRow>
               ) : (
-                sortedEndpoints.map((endpoint) => (
+                filteredEndpoints.map((endpoint) => (
                   <TableRow key={endpoint.id}>
                     <TableCell>
                       <div className="flex items-center gap-2">
@@ -801,12 +1006,16 @@ export default function EndpointsPage() {
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger>
-                            <time dateTime={endpoint.lastChecked.toISOString()} className="text-sm text-muted-foreground">
-                              {formatDate(endpoint.lastChecked)}
-                            </time>
+                            {endpoint.lastChecked ? (
+                              <time dateTime={endpoint.lastChecked.toISOString()} className="text-sm text-muted-foreground">
+                                {formatDate(endpoint.lastChecked)}
+                              </time>
+                            ) : (
+                              <span className="text-sm text-muted-foreground">Not checked yet</span>
+                            )}
                           </TooltipTrigger>
                           <TooltipContent>
-                            <p>{endpoint.lastChecked.toLocaleString()}</p>
+                            <p>{endpoint.lastChecked ? endpoint.lastChecked.toLocaleString() : 'Not checked yet'}</p>
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
@@ -816,7 +1025,13 @@ export default function EndpointsPage() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => toggleMonitoring(endpoint.id, endpoint.url)}
+                          onClick={() => {
+                            if (endpoint.id) {
+                              toggleMonitoring(endpoint.id, endpoint.url);
+                            } else {
+                              toast.error("Cannot monitor: Endpoint ID is missing");
+                            }
+                          }}
                         >
                           <RefreshCw
                             className={`h-4 w-4 ${monitoringState[endpoint.id]?.isActive

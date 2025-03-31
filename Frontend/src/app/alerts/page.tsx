@@ -2,7 +2,7 @@
 
 import React from "react";
 import MainLayout from "@/components/layouts/main-layout";
-import { Search, Filter, Bell, AlertCircle, Clock, X, CheckCircle, AlertTriangle, Info, ArrowUpDown, RefreshCw, Settings } from "lucide-react";
+import { Search, Filter, Bell, AlertCircle, Clock, X, CheckCircle, AlertTriangle, Info, ArrowUpDown, RefreshCw, Settings, ChevronLeftIcon, ChevronRightIcon, Slash, Loader2, Eye, EyeOff } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useEffect, useState, useCallback } from "react";
@@ -42,7 +42,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Loader2 } from "lucide-react";
 import { normalizeEnvironment, getEnvironmentLabel, useEnvironments } from "@/lib/environments";
 
 interface SMTPConfig {
@@ -94,9 +93,9 @@ const SEVERITY_ICONS: {
     color: string;
   }
 } = {
-  critical: { icon: AlertCircle, color: "text-destructive" },
-  error: { icon: AlertCircle, color: "text-destructive" },
-  warning: { icon: AlertTriangle, color: "text-yellow-500" },
+  critical: { icon: AlertCircle, color: "text-purple-600" },
+  error: { icon: AlertCircle, color: "text-red-500" },
+  warning: { icon: AlertTriangle, color: "text-amber-500" },
   info: { icon: Info, color: "text-blue-500" },
 };
 
@@ -138,6 +137,13 @@ export default function AlertsPage() {
     severity: "all",
     status: "all",
   });
+  const [pagination, setPagination] = useState({
+    page: 1,
+    limit: 20,
+    total: 0,
+    totalPages: 1
+  });
+  const [showPassword, setShowPassword] = useState(false);
 
   const formatAlerts = useCallback((alertsData: Alert[]): FormattedAlert[] => {
     return alertsData.map((alert): FormattedAlert => ({
@@ -157,25 +163,44 @@ export default function AlertsPage() {
   const fetchAlerts = useCallback(async () => {
     setIsLoading(true);
     try {
-      const alertsData = await api.alerts.getAll();
+      // Build query parameters for server-side filtering
+      const queryParams: any = {
+        page: pagination.page,
+        limit: pagination.limit
+      };
 
-      // Check if alertsData and alertsData.data exist
-      if (!alertsData || !alertsData.data) {
-        console.warn("No alerts data returned from API");
-        setAlerts([]);
-        setServices([]);
-        setEnvironments([]);
-        return;
-      }
+      // Only add filter params if they're not the default "all" value
+      if (filters.search) queryParams.search = filters.search;
+      if (filters.service !== "all") queryParams.service = filters.service;
+      if (filters.environment !== "all") queryParams.environment = filters.environment;
+      if (filters.severity !== "all") queryParams.severity = filters.severity;
+      if (filters.status !== "all") queryParams.status = filters.status;
 
-      const formattedAlerts = formatAlerts(alertsData.data);
+      // Fetch alerts with filters
+      const alertsData = await api.alerts.getAll(queryParams);
+
+      // Check if alertsData and alertsData.data exist and is an array
+      const alertsArray = alertsData?.data || [];
+      const formattedAlerts = formatAlerts(alertsArray);
+
       setAlerts(formattedAlerts);
 
-      // Extract unique services and environments with proper typing
-      const uniqueServices = [...new Set(formattedAlerts.map((alert: FormattedAlert) => alert.service))] as string[];
-      const uniqueEnvironments = [...new Set(formattedAlerts.map((alert: FormattedAlert) => alert.environment))] as string[];
-      setServices(uniqueServices);
-      setEnvironments(uniqueEnvironments);
+      // Update pagination information
+      setPagination({
+        page: alertsData.page || 1,
+        limit: alertsData.pageSize || 20,
+        total: alertsData.total || 0,
+        totalPages: alertsData.totalPages || 1
+      });
+
+      // Update unique services and environments for filter dropdowns
+      // We can either fetch these from a separate endpoint, or update from the first page of results
+      if (pagination.page === 1 || services.length === 0) {
+        const uniqueServices = [...new Set(formattedAlerts.map((alert: FormattedAlert) => alert.service))] as string[];
+        const uniqueEnvironments = [...new Set(formattedAlerts.map((alert: FormattedAlert) => alert.environment))] as string[];
+        setServices(uniqueServices);
+        setEnvironments(uniqueEnvironments);
+      }
 
       setError(null);
     } catch (err) {
@@ -186,15 +211,26 @@ export default function AlertsPage() {
       setAlerts([]);
       setServices([]);
       setEnvironments([]);
+      setPagination({
+        page: 1,
+        limit: 20,
+        total: 0,
+        totalPages: 1
+      });
     } finally {
       setIsLoading(false);
     }
-  }, [formatAlerts]);
+  }, [formatAlerts, filters, pagination.page, pagination.limit]);
 
+  // Re-fetch when filters change
   useEffect(() => {
+    // Reset to page 1 when filters change
+    setPagination(prev => ({ ...prev, page: 1 }));
     fetchAlerts();
+  }, [filters, fetchAlerts]);
 
-    // Set up auto-refresh
+  // Auto-refresh setup
+  useEffect(() => {
     let intervalId: NodeJS.Timeout;
     if (isAutoRefresh) {
       intervalId = setInterval(fetchAlerts, 30000); // Refresh every 30 seconds
@@ -239,17 +275,6 @@ export default function AlertsPage() {
     }
   };
 
-  const handleAcknowledge = async (alertId: string) => {
-    try {
-      await api.alerts.acknowledge(alertId);
-      toast.success("Alert acknowledged");
-      fetchAlerts(); // Refresh alerts
-    } catch (error) {
-      console.error("Failed to acknowledge alert:", error);
-      toast.error("Failed to acknowledge alert");
-    }
-  };
-
   const getSeverityIcon = (severity: string) => {
     if (!severity) return null;
     const config = SEVERITY_ICONS[severity.toLowerCase() as keyof typeof SEVERITY_ICONS];
@@ -259,20 +284,22 @@ export default function AlertsPage() {
     return <Icon className={`h-4 w-4 ${config.color}`} />;
   };
 
-  const filteredAlerts = alerts.filter(alert => {
-    const matchesSearch = filters.search
-      ? (alert.title?.toLowerCase() || '').includes(filters.search.toLowerCase()) ||
-      (alert.service?.toLowerCase() || '').includes(filters.search.toLowerCase()) ||
-      (alert.environment?.toLowerCase() || '').includes(filters.search.toLowerCase())
-      : true;
+  // Handle pagination
+  const handlePreviousPage = () => {
+    if (pagination.page > 1) {
+      setPagination(prev => ({ ...prev, page: prev.page - 1 }));
+    }
+  };
 
-    const matchesService = filters.service === "all" || alert.service === filters.service;
-    const matchesEnvironment = filters.environment === "all" || alert.environment === filters.environment;
-    const matchesSeverity = filters.severity === "all" || (alert.severity?.toLowerCase() || '') === filters.severity.toLowerCase();
-    const matchesStatus = filters.status === "all" || (alert.status?.toLowerCase() || '') === filters.status.toLowerCase();
+  const handleNextPage = () => {
+    if (pagination.page < pagination.totalPages) {
+      setPagination(prev => ({ ...prev, page: prev.page + 1 }));
+    }
+  };
 
-    return matchesSearch && matchesService && matchesEnvironment && matchesSeverity && matchesStatus;
-  });
+  // Calculate pagination info
+  const startItem = alerts.length === 0 ? 0 : (pagination.page - 1) * pagination.limit + 1;
+  const endItem = Math.min(startItem + alerts.length - 1, pagination.total);
 
   return (
     <MainLayout>
@@ -327,9 +354,9 @@ export default function AlertsPage() {
           </div>
         )}
 
-        <Card className="shadow-sm hover:shadow-md transition-all duration-300 border border-border/60 animate-in fade-in-50">
+        <Card className="shadow-md hover:shadow-lg transition-all duration-300 border border-border/60 animate-in fade-in-50">
           <CardHeader className="bg-muted/30 rounded-t-lg pb-2">
-            <CardTitle className="flex items-center gap-2">
+            <CardTitle className="flex items-center gap-2 text-xl">
               <Filter className="h-5 w-5 text-primary" />
               Filters
             </CardTitle>
@@ -338,7 +365,7 @@ export default function AlertsPage() {
           <CardContent className="pt-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
               <div className="space-y-2">
-                <Label htmlFor="alert-search" className="text-sm font-medium">Search</Label>
+                <Label htmlFor="alert-search" className="text-sm font-semibold">Search</Label>
                 <div className="relative">
                   <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
@@ -346,7 +373,7 @@ export default function AlertsPage() {
                     placeholder="Search alerts..."
                     value={filters.search}
                     onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-                    className="w-full pl-8 border-input/60 shadow-sm hover:border-input"
+                    className="w-full pl-8 border-input/60 shadow-sm hover:border-input focus:ring-2 focus:ring-primary/30 transition-all"
                   />
                   {filters.search && (
                     <Button
@@ -478,9 +505,9 @@ export default function AlertsPage() {
           </CardContent>
         </Card>
 
-        <Card className="shadow-sm hover:shadow-md transition-all duration-300 border border-border/60 animate-in fade-in-50">
+        <Card className="shadow-md hover:shadow-lg transition-all duration-300 border border-border/60 animate-in fade-in-50">
           <CardHeader className="bg-muted/30 rounded-t-lg pb-2">
-            <CardTitle className="flex items-center gap-2">
+            <CardTitle className="flex items-center gap-2 text-xl">
               <Bell className="h-5 w-5 text-primary" />
               Active Alerts
             </CardTitle>
@@ -488,73 +515,45 @@ export default function AlertsPage() {
           </CardHeader>
           <CardContent className="p-0">
             {isLoading ? (
-              <div className="p-6 space-y-5">
-                {Array.from({ length: 5 }).map((_, index) => (
-                  <div key={index} className="flex items-center gap-4 animate-pulse">
-                    <div className="w-6 h-6 bg-muted rounded-full"></div>
-                    <div className="flex-1 space-y-2">
-                      <div className="h-4 bg-muted rounded w-3/4"></div>
-                      <div className="flex gap-2">
-                        <div className="h-3 bg-muted rounded w-16"></div>
-                        <div className="h-3 bg-muted rounded w-20"></div>
-                      </div>
-                    </div>
-                    <div className="w-14 h-6 bg-muted rounded"></div>
-                  </div>
-                ))}
+              <div className="flex flex-col justify-center items-center py-20">
+                <Loader2 className="h-10 w-10 animate-spin mb-4 text-primary/60" />
+                <p className="text-muted-foreground">Loading alerts...</p>
               </div>
-            ) : filteredAlerts.length === 0 ? (
+            ) : alerts.length === 0 ? (
               <div className="flex flex-col items-center justify-center p-12 text-center">
                 <div className="rounded-full bg-muted/20 p-4 mb-4">
-                  <CheckCircle className="h-8 w-8 text-green-500" />
+                  <Slash className="h-8 w-8 text-muted-foreground/70" />
                 </div>
-                <h3 className="text-xl font-medium mb-2">No alerts found</h3>
-                <p className="text-muted-foreground text-center mb-4">
-                  {filters.search || filters.service !== "all" || filters.environment !== "all" || filters.severity !== "all" || filters.status !== "all"
-                    ? "Try adjusting your search criteria or clear filters"
-                    : "All systems are operating normally"}
+                <h3 className="text-lg font-medium">No alerts found</h3>
+                <p className="text-muted-foreground mt-1 mb-4">
+                  Try changing your filters or refreshing the page
                 </p>
-                {(filters.search || filters.service !== "all" || filters.environment !== "all" || filters.severity !== "all" || filters.status !== "all") && (
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setFilters({
-                        search: "",
-                        service: "all",
-                        environment: "all",
-                        severity: "all",
-                        status: "all",
-                      });
-                    }}
-                    className="mt-2"
-                  >
-                    <X className="mr-2 h-4 w-4" />
-                    Clear Filters
-                  </Button>
-                )}
+                <Button variant="outline" onClick={fetchAlerts}>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Refresh
+                </Button>
               </div>
             ) : (
-              <div className="overflow-hidden">
+              <div className="relative overflow-hidden">
                 <Table>
-                  <TableHeader className="bg-muted/30">
+                  <TableHeader className="bg-muted/30 sticky top-0 z-10">
                     <TableRow>
-                      <TableHead className="w-[150px]">Severity</TableHead>
-                      <TableHead>Message</TableHead>
-                      <TableHead className="w-[150px]">Service</TableHead>
-                      <TableHead className="w-[100px]">Status</TableHead>
-                      <TableHead className="w-[180px]">Time</TableHead>
-                      <TableHead className="text-right w-[100px]">Actions</TableHead>
+                      <TableHead className="w-[120px] py-3">Severity</TableHead>
+                      <TableHead className="w-[280px] py-3">Message</TableHead>
+                      <TableHead className="w-[160px] py-3">Service</TableHead>
+                      <TableHead className="w-[120px] py-3">Status</TableHead>
+                      <TableHead className="w-[160px] py-3">Time</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredAlerts.map((alert, index) => (
+                    {alerts.map((alert: FormattedAlert, index: number) => (
                       <TableRow
                         key={alert.id}
-                        className={`group hover:bg-muted/30 transition-colors cursor-pointer animate-in fade-in-50 slide-in-from-left-3`}
+                        className={`group hover:bg-muted/50 transition-colors cursor-pointer animate-in fade-in-50 slide-in-from-left-3 hover:shadow-sm`}
                         onClick={() => setSelectedAlert(alert)}
                         style={{ animationDelay: `${index * 30}ms` }}
                       >
-                        <TableCell className="font-medium">
+                        <TableCell className="font-medium py-3">
                           <div className="flex items-center gap-2">
                             {React.createElement(SEVERITY_ICONS[alert.severity]?.icon || AlertCircle, {
                               className: `h-4 w-4 ${SEVERITY_ICONS[alert.severity]?.color || "text-muted-foreground"}`,
@@ -562,17 +561,17 @@ export default function AlertsPage() {
                             <span className="capitalize">{alert.severity}</span>
                           </div>
                         </TableCell>
-                        <TableCell className="max-w-xs truncate">
-                          <span className="font-medium">{alert.title}</span>
+                        <TableCell className="py-3">
+                          <span className="font-medium line-clamp-1 group-hover:text-primary transition-colors">{alert.title}</span>
                         </TableCell>
-                        <TableCell>{alert.service}</TableCell>
-                        <TableCell>
+                        <TableCell className="py-3">{alert.service}</TableCell>
+                        <TableCell className="py-3">
                           <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${STATUS_BADGES[alert.status]?.color || STATUS_BADGES.default.color
                             }`}>
                             {STATUS_BADGES[alert.status]?.label || STATUS_BADGES.default.label}
                           </div>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="py-3 font-mono text-xs">
                           <TooltipProvider>
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -587,27 +586,39 @@ export default function AlertsPage() {
                             </Tooltip>
                           </TooltipProvider>
                         </TableCell>
-                        <TableCell className="text-right">
-                          <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleAcknowledge(alert.id);
-                              }}
-                              className="h-8 hover:bg-muted transition-colors"
-                              disabled={alert.status !== "active"}
-                            >
-                              <CheckCircle className="h-4 w-4 mr-1" />
-                              Ack
-                            </Button>
-                          </div>
-                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
+
+                {/* Pagination controls */}
+                <div className="flex justify-between items-center p-4 border-t">
+                  <div className="text-sm text-muted-foreground">
+                    Showing <span className="font-medium">{alerts.length === 0 ? 0 : startItem}</span> to <span className="font-medium">{endItem}</span> of <span className="font-medium">{pagination.total}</span> alerts
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={pagination.page === 1 || isLoading}
+                      onClick={handlePreviousPage}
+                      className="hover:shadow-md transition-all duration-200"
+                    >
+                      <ChevronLeftIcon className="h-4 w-4 mr-1" />
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={pagination.page >= pagination.totalPages || isLoading}
+                      onClick={handleNextPage}
+                      className="hover:shadow-md transition-all duration-200"
+                    >
+                      Next
+                      <ChevronRightIcon className="h-4 w-4 ml-1" />
+                    </Button>
+                  </div>
+                </div>
               </div>
             )}
           </CardContent>
@@ -615,156 +626,206 @@ export default function AlertsPage() {
       </div>
 
       <Dialog open={isConfigOpen} onOpenChange={setIsConfigOpen}>
-        <DialogContent className="sm:max-w-md animate-in fade-in-50 slide-in-from-top-5 duration-300">
+        <DialogContent className="sm:max-w-md animate-in fade-in-50 slide-in-from-top-5 duration-300 shadow-xl border">
           <DialogHeader>
-            <DialogTitle>Configure Email Notifications</DialogTitle>
+            <DialogTitle className="text-xl">Configure Email Notifications</DialogTitle>
             <DialogDescription>
               Set up SMTP settings to receive email notifications for alerts
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="smtp-host">SMTP Host</Label>
-              <Input
-                id="smtp-host"
-                placeholder="smtp.example.com"
-                value={smtpConfig.host}
-                onChange={(e) =>
-                  setSmtpConfig({ ...smtpConfig, host: e.target.value })
-                }
-                className="border-input/60 shadow-sm hover:border-input"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
+
+          <div className="space-y-6 py-4">
+            {/* SMTP Settings Section */}
+            <div className="space-y-4">
+              <h3 className="text-sm font-medium text-muted-foreground pb-1 border-b">SMTP Settings</h3>
+
               <div className="space-y-2">
-                <Label htmlFor="smtp-port">SMTP Port</Label>
+                <Label htmlFor="smtp-host">SMTP Host</Label>
                 <Input
-                  id="smtp-port"
-                  type="number"
-                  placeholder="587"
-                  value={smtpConfig.port}
+                  id="smtp-host"
+                  placeholder="smtp.gmail.com"
+                  value={smtpConfig.host}
                   onChange={(e) =>
-                    setSmtpConfig({
-                      ...smtpConfig,
-                      port: parseInt(e.target.value) || 587,
-                    })
+                    setSmtpConfig({ ...smtpConfig, host: e.target.value })
                   }
-                  className="border-input/60 shadow-sm hover:border-input"
+                  className="border-input/60 shadow-sm hover:border-input focus:ring-2 focus:ring-primary/30 transition-all"
                 />
               </div>
-              <div className="space-y-2 flex items-end">
-                <div className="flex items-center space-x-2 h-10 w-full">
-                  <Switch
-                    id="use-tls"
-                    checked={smtpConfig.use_tls}
-                    onCheckedChange={(checked) =>
-                      setSmtpConfig({ ...smtpConfig, use_tls: checked })
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="smtp-port">SMTP Port</Label>
+                  <Input
+                    id="smtp-port"
+                    type="number"
+                    placeholder="587"
+                    value={smtpConfig.port}
+                    onChange={(e) =>
+                      setSmtpConfig({
+                        ...smtpConfig,
+                        port: parseInt(e.target.value) || 587,
+                      })
                     }
-                    className="data-[state=checked]:bg-primary"
+                    className="border-input/60 shadow-sm hover:border-input focus:ring-2 focus:ring-primary/30 transition-all"
                   />
-                  <Label htmlFor="use-tls">Use TLS</Label>
+                </div>
+                <div className="space-y-2 flex flex-col justify-end">
+                  <Label htmlFor="use-tls" className="mb-2">Use TLS</Label>
+                  <div className="flex items-center space-x-2 h-10">
+                    <Switch
+                      id="use-tls"
+                      checked={smtpConfig.use_tls}
+                      onCheckedChange={(checked) =>
+                        setSmtpConfig({ ...smtpConfig, use_tls: checked })
+                      }
+                      className="data-[state=checked]:bg-primary"
+                    />
+                    <span className="text-sm">{smtpConfig.use_tls ? "Enabled" : "Disabled"}</span>
+                  </div>
                 </div>
               </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="smtp-username">Username</Label>
-              <Input
-                id="smtp-username"
-                placeholder="username"
-                value={smtpConfig.username}
-                onChange={(e) =>
-                  setSmtpConfig({ ...smtpConfig, username: e.target.value })
-                }
-                className="border-input/60 shadow-sm hover:border-input"
-              />
+
+            {/* Authentication Section */}
+            <div className="space-y-4">
+              <h3 className="text-sm font-medium text-muted-foreground pb-1 border-b">Authentication</h3>
+
+              <div className="space-y-2">
+                <Label htmlFor="smtp-username">Username</Label>
+                <Input
+                  id="smtp-username"
+                  placeholder="your-email@gmail.com"
+                  value={smtpConfig.username}
+                  onChange={(e) =>
+                    setSmtpConfig({ ...smtpConfig, username: e.target.value })
+                  }
+                  className="border-input/60 shadow-sm hover:border-input focus:ring-2 focus:ring-primary/30 transition-all"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="smtp-password">Password</Label>
+                <div className="relative">
+                  <Input
+                    id="smtp-password"
+                    type={showPassword ? "text" : "password"}
+                    placeholder="••••••••"
+                    value={smtpConfig.password}
+                    onChange={(e) =>
+                      setSmtpConfig({ ...smtpConfig, password: e.target.value })
+                    }
+                    className="border-input/60 shadow-sm hover:border-input focus:ring-2 focus:ring-primary/30 transition-all pr-10"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowPassword(!showPassword)}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </Button>
+                </div>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="smtp-password">Password</Label>
-              <Input
-                id="smtp-password"
-                type="password"
-                placeholder="••••••••"
-                value={smtpConfig.password}
-                onChange={(e) =>
-                  setSmtpConfig({ ...smtpConfig, password: e.target.value })
-                }
-                className="border-input/60 shadow-sm hover:border-input"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="from-email">From Email</Label>
-              <Input
-                id="from-email"
-                placeholder="alerts@example.com"
-                value={smtpConfig.from_email}
-                onChange={(e) =>
-                  setSmtpConfig({ ...smtpConfig, from_email: e.target.value })
-                }
-                className="border-input/60 shadow-sm hover:border-input"
-              />
+
+            {/* Sender Section */}
+            <div className="space-y-4">
+              <h3 className="text-sm font-medium text-muted-foreground pb-1 border-b">Sender</h3>
+
+              <div className="space-y-2">
+                <Label htmlFor="from-email">From Email</Label>
+                <Input
+                  id="from-email"
+                  placeholder="alerts@yourdomain.com"
+                  value={smtpConfig.from_email}
+                  onChange={(e) =>
+                    setSmtpConfig({ ...smtpConfig, from_email: e.target.value })
+                  }
+                  className="border-input/60 shadow-sm hover:border-input focus:ring-2 focus:ring-primary/30 transition-all"
+                />
+                <p className="text-xs text-muted-foreground">This email address will appear as the sender for all alert notifications.</p>
+              </div>
             </div>
           </div>
+
           <DialogFooter>
             <Button
               type="submit"
               onClick={handleSMTPSubmit}
               disabled={isSaving}
-              className="hover:shadow-md transition-all duration-200"
+              className="hover:shadow-md transition-all duration-200 focus:ring-2 focus:ring-primary/30"
             >
               {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {isSaving ? "Saving..." : "Save"}
+              {isSaving ? "Saving..." : "Save Configuration"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={!!selectedAlert} onOpenChange={(open) => !open && setSelectedAlert(null)}>
-        <DialogContent className="sm:max-w-xl animate-in fade-in-50 zoom-in-95 duration-300">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] animate-in fade-in-50 zoom-in-95 duration-300 shadow-xl">
           {selectedAlert && (
             <>
-              <DialogHeader>
-                <div className="flex items-center gap-2">
+              <div className="flex flex-col space-y-1 mb-4">
+                <div className="flex items-center">
                   {React.createElement(SEVERITY_ICONS[selectedAlert.severity]?.icon || AlertCircle, {
-                    className: `h-5 w-5 ${SEVERITY_ICONS[selectedAlert.severity]?.color || "text-muted-foreground"}`,
+                    className: `h-5 w-5 mr-2 ${SEVERITY_ICONS[selectedAlert.severity]?.color || "text-muted-foreground"}`,
                   })}
-                  <DialogTitle className="text-xl">{selectedAlert.title}</DialogTitle>
+                  <span className="text-xl font-semibold">{selectedAlert.title}</span>
                 </div>
-                <DialogDescription className="flex flex-wrap gap-2 mt-2">
-                  <Badge className="capitalize">{selectedAlert.severity}</Badge>
-                  <Badge variant="outline">{selectedAlert.service}</Badge>
-                  <Badge variant="outline">{selectedAlert.environment}</Badge>
-                  <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${STATUS_BADGES[selectedAlert.status]?.color || STATUS_BADGES.default.color
-                    }`}>
+                <div className="text-sm text-muted-foreground font-mono">
+                  {formatDate(selectedAlert.timestamp)}
+                </div>
+              </div>
+
+              <div className="space-y-6 overflow-y-auto pr-1 max-h-[60vh] custom-scrollbar">
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="secondary" className="capitalize font-medium">
+                    {selectedAlert.severity}
+                  </Badge>
+                  <Badge variant="outline" className="font-medium">
+                    {selectedAlert.service}
+                  </Badge>
+                  <Badge variant="outline" className="font-medium">
+                    {selectedAlert.environment}
+                  </Badge>
+                  <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${STATUS_BADGES[selectedAlert.status]?.color || STATUS_BADGES.default.color}`}>
                     {STATUS_BADGES[selectedAlert.status]?.label || STATUS_BADGES.default.label}
                   </div>
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2">
+                </div>
+
                 {selectedAlert.description && (
                   <div className="space-y-2">
-                    <h4 className="font-medium">Description</h4>
-                    <div className="text-sm text-muted-foreground bg-muted/20 p-3 rounded-md">
-                      <ReactMarkdown>{selectedAlert.description}</ReactMarkdown>
+                    <h4 className="text-base font-semibold text-primary">Description</h4>
+                    <div className="bg-muted/50 p-4 rounded-md border shadow-sm hover:shadow-md transition-all">
+                      <div className="text-sm">
+                        <ReactMarkdown>{selectedAlert.description}</ReactMarkdown>
+                      </div>
                     </div>
                   </div>
                 )}
+
                 {selectedAlert.remediation && (
                   <div className="space-y-2">
-                    <h4 className="font-medium">Remediation Steps</h4>
-                    <div className="text-sm bg-muted/20 p-3 rounded-md">
-                      <ReactMarkdown>{selectedAlert.remediation}</ReactMarkdown>
+                    <h4 className="text-base font-semibold text-primary">Remediation Steps</h4>
+                    <div className="bg-muted/50 p-4 rounded-md border shadow-sm hover:shadow-md transition-all">
+                      <div className="text-sm font-mono">
+                        <ReactMarkdown>{selectedAlert.remediation}</ReactMarkdown>
+                      </div>
                     </div>
                   </div>
                 )}
+
                 <div className="space-y-2">
-                  <h4 className="font-medium">Timeline</h4>
-                  <div className="space-y-2">
+                  <h4 className="text-base font-semibold text-primary">Timeline</h4>
+                  <div className="bg-muted/50 p-4 rounded-md border shadow-sm hover:shadow-md transition-all space-y-3">
                     <div className="flex justify-between text-sm">
                       <div className="flex items-center gap-2">
                         <div className="h-2 w-2 rounded-full bg-blue-500"></div>
                         <span>Detected</span>
                       </div>
-                      <span className="text-muted-foreground">{formatDate(selectedAlert.timestamp)}</span>
+                      <span className="text-muted-foreground font-mono">{formatDate(selectedAlert.timestamp)}</span>
                     </div>
                     {selectedAlert.acknowledged && (
                       <div className="flex justify-between text-sm">
@@ -772,13 +833,34 @@ export default function AlertsPage() {
                           <div className="h-2 w-2 rounded-full bg-yellow-500"></div>
                           <span>Acknowledged</span>
                         </div>
-                        <span className="text-muted-foreground">A few seconds ago</span>
+                        <span className="text-muted-foreground font-mono">A few seconds ago</span>
+                      </div>
+                    )}
+                    {selectedAlert.status === "resolved" && (
+                      <div className="flex justify-between text-sm">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-green-500"></div>
+                          <span>Resolved</span>
+                        </div>
+                        <span className="text-muted-foreground font-mono">N/A</span>
                       </div>
                     )}
                   </div>
                 </div>
+
+                <div className="grid grid-cols-2 gap-4 pt-4 border-t">
+                  <div>
+                    <h3 className="text-xs font-medium mb-1 text-muted-foreground">Service</h3>
+                    <p className="text-sm">{selectedAlert.service}</p>
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-medium mb-1 text-muted-foreground">Environment</h3>
+                    <p className="text-sm">{selectedAlert.environment}</p>
+                  </div>
+                </div>
               </div>
-              <DialogFooter className="gap-2 sm:gap-0">
+
+              <div className="pt-4 flex justify-end gap-2">
                 <Button
                   variant="outline"
                   onClick={() => setSelectedAlert(null)}
@@ -786,19 +868,7 @@ export default function AlertsPage() {
                 >
                   Close
                 </Button>
-                {selectedAlert.status === "active" && (
-                  <Button
-                    onClick={() => {
-                      handleAcknowledge(selectedAlert.id);
-                      setSelectedAlert(null);
-                    }}
-                    className="hover:shadow-md transition-all duration-150"
-                  >
-                    <CheckCircle className="mr-2 h-4 w-4" />
-                    Acknowledge
-                  </Button>
-                )}
-              </DialogFooter>
+              </div>
             </>
           )}
         </DialogContent>

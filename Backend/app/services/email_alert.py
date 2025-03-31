@@ -1,8 +1,9 @@
 import os
 import logging
+import ssl
 from datetime import datetime
 from pathlib import Path
-from aiosmtplib import send as async_send_email, SMTPException
+from aiosmtplib import SMTP
 from email.message import EmailMessage
 from jinja2 import Environment, FileSystemLoader, TemplateError
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -11,9 +12,13 @@ from ..config import settings
 logger = logging.getLogger(__name__)
 
 # Set up Jinja2 environment
-templates_dir = Path(__file__).parents[3] / "backend/email_templates"
-os.makedirs(templates_dir, exist_ok=True)
-env = Environment(loader=FileSystemLoader(templates_dir))
+templates_dir = Path(__file__).parents[2] / "email_templates"  # This points to Backend/email_templates
+logger.info(f"📁 Loading email templates from: {templates_dir}")
+if not templates_dir.exists():
+    logger.error(f"❌ Templates directory not found at {templates_dir}")
+    raise FileNotFoundError(f"Templates directory not found at {templates_dir}")
+
+env = Environment(loader=FileSystemLoader(str(templates_dir)))
 
 @retry(
     stop=stop_after_attempt(3),
@@ -56,6 +61,7 @@ async def send_email_alert(subject: str, template_name: str, context: dict) -> N
         # Render template
         try:
             template = env.get_template(template_name)
+            logger.debug(f"✅ Template {template_name} loaded successfully")
             html_body = template.render(**context)
             logger.debug("✅ Template rendered successfully")
         except TemplateError as e:
@@ -75,23 +81,24 @@ async def send_email_alert(subject: str, template_name: str, context: dict) -> N
         logger.info(f"🚀 Sending email to {settings.ALERT_RECIPIENT} via {settings.SMTP_SERVER}:{settings.SMTP_PORT}")
 
         try:
-            await async_send_email(
-                message=msg,
+            # Create SSL context
+            ssl_context = ssl.create_default_context()
+
+            smtp = SMTP(
                 hostname=settings.SMTP_SERVER,
                 port=settings.SMTP_PORT,
-                username=settings.SMTP_USERNAME,
-                password=settings.SMTP_PASSWORD,
-                start_tls=True,
+                use_tls=True,
+                tls_context=ssl_context,
+                timeout=30
             )
-            logger.info("✅ Email alert sent successfully")
-        except SMTPException as e:
-            logger.error(f"❌ SMTP Error: {str(e)}")
-            raise
-        except ConnectionRefusedError:
-            logger.error(f"❌ Connection refused to SMTP server. Check your SMTP settings.")
-            raise
+
+            async with smtp:
+                await smtp.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+                await smtp.send_message(msg)
+                logger.info("✅ Email alert sent successfully")
+
         except Exception as e:
-            logger.error(f"❌ Unexpected error sending email: {str(e)}")
+            logger.error(f"❌ SMTP Error: {str(e)}")
             raise
 
     except Exception as e:

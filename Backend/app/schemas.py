@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Optional, Dict, List
+from typing import Any
 from pydantic import BaseModel, Field, GetCoreSchemaHandler
 from pydantic_core import core_schema
 from bson import ObjectId
@@ -106,24 +106,3 @@ class MetricRead(BaseModel):
         "json_encoders": {ObjectId: str},
         "arbitrary_types_allowed": True
     }
-
-class Log(BaseModel):
-    timestamp: datetime
-    level: str
-    message: str
-    service: str
-    endpoint: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-
-class LogsResponse(BaseModel):
-    logs: List[Log]
-    total: int
-
-class LogsQueryParams(BaseModel):
-    page: Optional[int] = 1
-    limit: Optional[int] = 50
-    service: Optional[str] = None
-    level: Optional[str] = None
-    startDate: Optional[datetime] = None
-    endDate: Optional[datetime] = None
-    search: Optional[str] = None

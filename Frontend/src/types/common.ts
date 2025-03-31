@@ -83,10 +83,12 @@ export interface FilterParams {
   environment?: string;
   status?: string;
   service?: string;
+  severity?: string;
   startDate?: string;
   endDate?: string;
   page?: number;
   pageSize?: number;
+  limit?: number;
   sortBy?: string;
   sortOrder?: 'asc' | 'desc';
   log_type?: string;
