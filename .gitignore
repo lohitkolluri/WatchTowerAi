@@ -37,8 +37,6 @@ ENV/
 *.key
 *.crt
 
-# Logs
-*.log
 
 # VS Code
 .vscode/
@@ -81,8 +79,6 @@ node_modules/
 # Next.js build output
 .next/
 
-# Logs
-logs/
 *.log
 
 # Dependency directories
