@@ -681,3 +681,67 @@
 .dark .toast-info {
   @apply bg-blue-950/50 border-blue-800 text-blue-400;
 }
+
+/* Custom scrollbar styling */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: hsl(var(--muted));
+  border-radius: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: hsl(var(--primary) / 0.2);
+  border-radius: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--primary) / 0.4);
+}
+
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--primary) / 0.3) hsl(var(--muted));
+}
+
+/* Resizable table columns */
+.resizable-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+.resizable-table th {
+  position: relative;
+  overflow: hidden;
+}
+
+.resizable-table th.resizable {
+  resize: horizontal;
+  overflow: auto;
+  min-width: 100px;
+}
+
+.resizable-table th.resizable::after {
+  content: '';
+  cursor: col-resize;
+  position: absolute;
+  right: 0;
+  top: 0;
+  height: 100%;
+  width: 5px;
+  background-color: hsl(var(--border));
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.resizable-table th.resizable:hover::after {
+  opacity: 0.4;
+}
+
+.resizable-table th.resizable:active::after {
+  opacity: 0.6;
+}

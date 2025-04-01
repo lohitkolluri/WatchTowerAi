@@ -83,10 +83,12 @@ export interface FilterParams {
   environment?: string;
   status?: string;
   service?: string;
+  severity?: string;
   startDate?: string;
   endDate?: string;
   page?: number;
   pageSize?: number;
+  limit?: number;
   sortBy?: string;
   sortOrder?: 'asc' | 'desc';
   log_type?: string;
@@ -197,14 +199,25 @@ export interface CreateEndpointRequest {
   timeout?: number;
 }
 
+export type LogLevel = 'info' | 'warning' | 'error' | 'critical' | 'fatal';
+export type LogType = 'database' | 'auth' | 'request' | 'performance' | 'security' | 'infrastructure' | 'unknown';
+export type LogSubType = string;
+
 export interface Log {
   id: string;
   timestamp: string;
-  level: LogLevel;
   service: string;
+  level: LogLevel;
   message: string;
-  metadata?: Record<string, any> | null;
-  raw_payload?: Record<string, any> | null;
+  metadata?: Record<string, any>;
+  endpoint?: string;
+  environment?: string;
+  error_code?: string;
+  correlation_id?: string;
+  raw_payload?: any;
+  log_type?: LogType;
+  log_subtype?: LogSubType;
+  confidence_score?: number;
+  entities?: Record<string, any>;
+  tags?: string[];
 }
-
-export type LogLevel = "INFO" | "WARN" | "ERROR" | "DEBUG";

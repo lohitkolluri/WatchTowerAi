@@ -5,8 +5,6 @@ from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 from pymongo import IndexModel, ASCENDING, DESCENDING
 from .config import settings
 import os
-from typing import Optional, List, Dict, Any
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -21,75 +19,6 @@ class MongoDB:
     api_monitors = None
     api_endpoints = None
     endpoint_pings = None
-
-    async def get_logs(
-        self,
-        page: int = 1,
-        limit: int = 50,
-        service: Optional[str] = None,
-        level: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        search: Optional[str] = None
-    ) -> tuple[List[Dict[str, Any]], int]:
-        query = {}
-
-        if service:
-            query["service"] = service
-        if level:
-            query["level"] = level
-        if start_date or end_date:
-            query["timestamp"] = {}
-            if start_date:
-                query["timestamp"]["$gte"] = start_date
-            if end_date:
-                query["timestamp"]["$lte"] = end_date
-        if search:
-            query["$or"] = [
-                {"message": {"$regex": search, "$options": "i"}},
-                {"service": {"$regex": search, "$options": "i"}},
-                {"endpoint": {"$regex": search, "$options": "i"}}
-            ]
-
-        total = await self.db.logs.count_documents(query)
-        cursor = self.db.logs.find(query)
-
-        # Sort by timestamp descending (newest first)
-        cursor.sort("timestamp", DESCENDING)
-
-        # Apply pagination
-        cursor.skip((page - 1) * limit).limit(limit)
-
-        logs = await cursor.to_list(length=limit)
-        return logs, total
-
-    async def get_services_list(self) -> List[str]:
-        services = await self.db.logs.distinct("service")
-        return sorted(services)
-
-    async def add_log(
-        self,
-        level: str,
-        message: str,
-        service: str,
-        endpoint: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        log = {
-            "timestamp": datetime.utcnow(),
-            "level": level.lower(),
-            "message": message,
-            "service": service,
-            "endpoint": endpoint,
-            "metadata": metadata
-        }
-        result = await self.db.logs.insert_one(log)
-        log["_id"] = result.inserted_id
-        return log
-
-    async def clear_logs(self) -> int:
-        result = await self.db.logs.delete_many({})
-        return result.deleted_count
 
 async def connect_to_mongo():
     """Establish connection to MongoDB"""

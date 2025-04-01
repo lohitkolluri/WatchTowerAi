@@ -119,16 +119,39 @@ const ErrorRateCard = ({ data, isLoading }: { data: ErrorRateDataPoint[], isLoad
       tooltip: {
         mode: 'index',
         intersect: false,
-        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+        backgroundColor: 'rgba(0, 0, 0, 0.85)',
         titleColor: 'rgb(255, 255, 255)',
         bodyColor: 'rgb(255, 255, 255)',
         borderColor: 'rgba(255, 255, 255, 0.1)',
         borderWidth: 1,
-        padding: 10,
+        padding: 12,
+        cornerRadius: 8,
+        boxPadding: 4,
+        usePointStyle: true,
+        boxWidth: 8,
         callbacks: {
+          title: function (context: any) {
+            return `Time: ${context[0].label}`;
+          },
           label: function (context: any) {
-            return `Error Rate: ${context.parsed.y.toFixed(2)}%`;
+            const dataPoint = data[context.dataIndex];
+            return [
+              `Error Rate: ${dataPoint.errorRate.toFixed(2)}%`,
+              `Logs: ${Math.round(dataPoint.errorRate * 0.8)} errors`,
+            ];
+          },
+          labelTextColor: function () {
+            return 'rgb(255, 255, 255)';
           }
+        },
+        bodyFont: {
+          family: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace',
+          size: 12
+        },
+        titleFont: {
+          family: 'ui-sans-serif, system-ui, sans-serif',
+          size: 13,
+          weight: 'bold'
         }
       }
     },
@@ -161,6 +184,25 @@ const ErrorRateCard = ({ data, isLoading }: { data: ErrorRateDataPoint[], isLoad
           }
         }
       }
+    },
+    onClick: (event, elements) => {
+      if (elements && elements.length > 0) {
+        const dataIndex = elements[0].index;
+        const clickedTime = data[dataIndex].timestamp;
+
+        const clickedDate = new Date(clickedTime);
+        const startTime = new Date(clickedDate.getTime() - 15 * 60 * 1000);
+        const endTime = new Date(clickedDate.getTime() + 15 * 60 * 1000);
+
+        const startParam = startTime.toISOString();
+        const endParam = endTime.toISOString();
+
+        window.location.href = `/logs?level=error&startDate=${startParam}&endDate=${endParam}`;
+      }
+    },
+    onHover: (event: any, elements) => {
+      const chartCanvas = event.chart.canvas;
+      chartCanvas.style.cursor = elements && elements.length ? 'pointer' : 'default';
     }
   };
 
@@ -458,15 +500,22 @@ export default function Dashboard() {
                   {activeAlerts.slice(0, 3).map((alert, index) => (
                     <div
                       key={alert.id}
-                      className="py-4 first:pt-2 hover:bg-muted/20 rounded-md px-2 -mx-2 transition-colors cursor-pointer animate-in fade-in-50"
+                      className="py-4 first:pt-2 hover:bg-muted/20 rounded-md px-2 -mx-2 transition-colors cursor-pointer animate-in fade-in-50 group"
                       style={{ animationDelay: `${index * 100}ms` }}
-                      onClick={() => window.location.href = `/alerts?alert=${alert.id}`}
+                      onClick={() => {
+                        // Create URL with pre-filled filters
+                        const queryParams = new URLSearchParams({
+                          severity: alert.severity,
+                          service: alert.service,
+                        });
+                        window.location.href = `/alerts?${queryParams.toString()}`;
+                      }}
                     >
                       <div className="flex items-center gap-3">
                         <div className={`rounded-full p-1 ${alert.severity === 'critical'
                           ? 'bg-red-100 text-red-600'
                           : alert.severity === 'warning'
-                            ? 'bg-yellow-100 text-yellow-600'
+                            ? 'bg-amber-100 text-amber-600'
                             : 'bg-blue-100 text-blue-600'
                           }`}>
                           {alert.severity === 'critical' ? (
@@ -478,13 +527,13 @@ export default function Dashboard() {
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{alert.title}</p>
+                          <p className="text-sm font-medium truncate group-hover:text-primary transition-colors">{alert.title}</p>
                           <div className="flex items-center text-xs text-muted-foreground gap-2 mt-1">
                             <span>{alert.service}</span>
                             <span className="h-1 w-1 rounded-full bg-muted-foreground"></span>
                             <span>{getEnvironmentLabel(alert.environment)}</span>
                             <span className="h-1 w-1 rounded-full bg-muted-foreground"></span>
-                            <span>{format(alert.timestamp, 'HH:mm')}</span>
+                            <span className="font-mono">{format(alert.timestamp, 'HH:mm')}</span>
                           </div>
                         </div>
                         <Badge
@@ -492,12 +541,13 @@ export default function Dashboard() {
                           className={`capitalize ${alert.severity === 'critical'
                             ? 'border-red-200 text-red-600'
                             : alert.severity === 'warning'
-                              ? 'border-yellow-200 text-yellow-600'
+                              ? 'border-amber-200 text-amber-600'
                               : 'border-blue-200 text-blue-600'
                             }`}
                         >
                           {alert.severity}
                         </Badge>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity ml-2" />
                       </div>
                     </div>
                   ))}

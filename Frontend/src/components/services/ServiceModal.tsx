@@ -1,7 +1,14 @@
+"use client";
+
 import { useState, useEffect } from "react";
 import { X, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle
+} from "@/components/ui/dialog";
 import { getAllEnvironments, normalizeEnvironment } from "@/lib/environments";
 
 interface Endpoint {
@@ -64,6 +71,7 @@ export function ServiceModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showEndpointConfig, setShowEndpointConfig] = useState(false);
+  const [formSubmitted, setFormSubmitted] = useState(false);
   const [customHeaders, setCustomHeaders] = useState<{ key: string; value: string }[]>([
     { key: "", value: "" }
   ]);
@@ -204,6 +212,7 @@ export function ServiceModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setFormSubmitted(true);
 
     // Validate form
     if (!formData.name.trim()) {
@@ -249,167 +258,204 @@ export function ServiceModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-background rounded-lg shadow-lg w-full max-w-md max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center p-4 border-b">
-              <h2 className="text-xl font-semibold">
-                {initialData ? "Edit Service" : "Register New Service"}
-              </h2>
-              <button
-                onClick={() => onOpenChange(false)}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <X className="h-5 w-5" />
-              </button>
+      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto shadow-xl border">
+        <DialogHeader className="p-4 border-b">
+          <div className="flex justify-between items-center">
+            <DialogTitle className="text-xl font-semibold">
+              {initialData ? "Edit Service" : "Register New Service"}
+            </DialogTitle>
+            <button
+              type="button"
+              onClick={() => onOpenChange(false)}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit} className="p-4 space-y-6">
+          {/* Error Alert */}
+          {error && (
+            <div className="bg-destructive/10 border border-destructive/30 text-destructive px-4 py-3 rounded-md relative mb-4">
+              <span className="block sm:inline">{error}</span>
+            </div>
+          )}
+
+          {/* Service Details Section */}
+          <div className="space-y-4">
+            <h3 className="text-md font-medium text-muted-foreground pb-1 border-b">Service Details</h3>
+
+            <div className="space-y-2">
+              <label htmlFor="name" className="text-sm font-medium flex justify-between">
+                <span>Service Name <span className="text-destructive">*</span></span>
+                {formSubmitted && !formData.name.trim() && (
+                  <span className="text-destructive text-xs">Required field</span>
+                )}
+              </label>
+              <input
+                id="name"
+                name="name"
+                value={formData.name}
+                onChange={handleChange}
+                placeholder="e.g., Auth Service, Payment API"
+                className={`w-full rounded-md border ${formSubmitted && !formData.name.trim() ? 'border-destructive' : 'border-input'} bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 transition-all hover:border-muted-foreground/50`}
+                required
+              />
             </div>
 
-            <form onSubmit={handleSubmit} className="p-4 space-y-4">
-              {error && (
-                <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
-                  {error}
-                </div>
-              )}
+            <div className="space-y-2">
+              <label htmlFor="environment" className="text-sm font-medium">
+                Environment <span className="text-destructive">*</span>
+              </label>
+              <select
+                id="environment"
+                name="environment"
+                value={formData.environment}
+                onChange={handleChange}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 transition-all hover:border-muted-foreground/50"
+                required
+              >
+                {environments.map(env => (
+                  <option key={env.value} value={env.value}>{env.label}</option>
+                ))}
+              </select>
+            </div>
 
-              <div className="space-y-2">
-                <label htmlFor="name" className="text-sm font-medium">
-                  Service Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  id="name"
-                  name="name"
-                  value={formData.name}
-                  onChange={handleChange}
-                  placeholder="e.g., Auth Service, Payment API"
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  required
-                />
-              </div>
+            <div className="space-y-2">
+              <label htmlFor="alertRules" className="text-sm font-medium flex justify-between">
+                <span>Alert Rules <span className="text-destructive">*</span></span>
+                {formSubmitted && !formData.alertRules.trim() && (
+                  <span className="text-destructive text-xs">Required field</span>
+                )}
+              </label>
+              <input
+                id="alertRules"
+                name="alertRules"
+                value={formData.alertRules}
+                onChange={handleChange}
+                placeholder="e.g., Error rate > 5%, CPU usage > 90%"
+                className={`w-full rounded-md border ${formSubmitted && !formData.alertRules.trim() ? 'border-destructive' : 'border-input'} bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 transition-all hover:border-muted-foreground/50`}
+                required
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Examples: <code className="bg-muted px-1 py-0.5 rounded">Error rate {'>'}  5%</code>, <code className="bg-muted px-1 py-0.5 rounded">Response time {'>'}  1000ms</code>, <code className="bg-muted px-1 py-0.5 rounded">Uptime {'<'} 99.9%</code>
+              </p>
+            </div>
+          </div>
 
-              <div className="space-y-2">
-                <label htmlFor="environment" className="text-sm font-medium">
-                  Environment <span className="text-red-500">*</span>
-                </label>
-                <select
-                  id="environment"
-                  name="environment"
-                  value={formData.environment}
-                  onChange={handleChange}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  required
-                >
-                  {environments.map(env => (
-                    <option key={env.value} value={env.value}>{env.label}</option>
-                  ))}
-                </select>
-              </div>
+          {/* Notification Settings Section */}
+          <div className="space-y-4">
+            <h3 className="text-md font-medium text-muted-foreground pb-1 border-b">Notification Settings</h3>
 
-              <div className="space-y-2">
-                <label htmlFor="alertRules" className="text-sm font-medium">
-                  Alert Rules <span className="text-red-500">*</span>
-                </label>
-                <input
-                  id="alertRules"
-                  name="alertRules"
-                  value={formData.alertRules}
-                  onChange={handleChange}
-                  placeholder="e.g., Error rate > 1%, CPU usage > 80%"
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">
-                  Notification Channels <span className="text-red-500">*</span>
-                </label>
-                <div className="space-y-2">
-                  <div className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      id="email"
-                      checked={formData.notificationChannels.includes("Email")}
-                      onChange={() => handleCheckboxChange("Email")}
-                      className="rounded border-gray-300 text-primary focus:ring-primary"
-                    />
-                    <label htmlFor="email" className="text-sm">
-                      Email
-                    </label>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label htmlFor="endpoint-select" className="text-sm font-medium">
-                  Select Endpoint
-                </label>
-                <div className="flex items-center gap-2">
-                  <select
-                    id="endpoint-select"
-                    value={selectedEndpointId}
-                    onChange={(e) => handleEndpointSelect(e.target.value)}
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <option value="">Manual Configuration</option>
-                    {availableEndpoints.map(endpoint => {
-                      const id = endpoint.id || endpoint._id || "";
-                      return (
-                        <option key={id} value={id}>
-                          {endpoint.name || endpoint.url} ({endpoint.method})
-                        </option>
-                      );
-                    })}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={fetchEndpoints}
-                    className="p-2 rounded-md border border-input bg-background hover:bg-accent"
-                    disabled={isLoadingEndpoints}
-                  >
-                    <RefreshCw className={`h-4 w-4 ${isLoadingEndpoints ? 'animate-spin' : ''}`} />
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium flex items-center gap-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex justify-between">
+                <span>Notification Channels <span className="text-destructive">*</span></span>
+                {formSubmitted && formData.notificationChannels.length === 0 && (
+                  <span className="text-destructive text-xs">Select at least one channel</span>
+                )}
+              </label>
+              <div className="space-y-3 bg-muted/30 p-3 rounded-md">
+                <div className="flex items-center space-x-2">
                   <input
                     type="checkbox"
-                    checked={showEndpointConfig}
-                    onChange={(e) => setShowEndpointConfig(e.target.checked)}
-                    className="rounded border-gray-300 text-primary focus:ring-primary"
+                    id="email"
+                    checked={formData.notificationChannels.includes("Email")}
+                    onChange={() => handleCheckboxChange("Email")}
+                    className="rounded border-gray-300 text-primary focus:ring-primary h-4 w-4"
                   />
+                  <label htmlFor="email" className="text-sm">
+                    Email Notifications
+                  </label>
+                </div>
+                {/* Add future notification channels here */}
+              </div>
+            </div>
+          </div>
+
+          {/* Endpoint Configuration Section */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-md font-medium text-muted-foreground pb-1">Endpoint Configuration</h3>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  id="show-endpoint-config"
+                  checked={showEndpointConfig}
+                  onChange={(e) => setShowEndpointConfig(e.target.checked)}
+                  className="rounded border-gray-300 text-primary focus:ring-primary h-4 w-4"
+                />
+                <label htmlFor="show-endpoint-config" className="text-sm cursor-pointer">
                   Configure Endpoint Details
                 </label>
               </div>
+            </div>
 
-              {showEndpointConfig && (
-                <div className="space-y-4 border rounded-lg p-4 bg-muted/10">
-                  <div className="space-y-2">
-                    <label htmlFor="url" className="text-sm font-medium">
-                      Endpoint URL <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      id="url"
-                      name="url"
-                      value={formData.endpoint?.url}
-                      onChange={handleEndpointChange}
-                      placeholder="https://api.example.com/health"
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      required={showEndpointConfig}
-                    />
-                  </div>
+            <div className="space-y-2">
+              <label htmlFor="endpoint-select" className="text-sm font-medium">
+                Select Existing Endpoint
+              </label>
+              <div className="flex items-center gap-2">
+                <select
+                  id="endpoint-select"
+                  value={selectedEndpointId}
+                  onChange={(e) => handleEndpointSelect(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 transition-all hover:border-muted-foreground/50"
+                  disabled={!showEndpointConfig}
+                >
+                  <option value="">Manual Configuration</option>
+                  {availableEndpoints.map(endpoint => {
+                    const id = endpoint.id || endpoint._id || "";
+                    return (
+                      <option key={id} value={id}>
+                        {endpoint.name || endpoint.url} ({endpoint.method})
+                      </option>
+                    );
+                  })}
+                </select>
+                <button
+                  type="button"
+                  onClick={fetchEndpoints}
+                  className={`p-2 rounded-md border border-input ${!showEndpointConfig ? 'bg-muted cursor-not-allowed opacity-50' : 'bg-background hover:bg-accent hover:text-accent-foreground'} transition-colors`}
+                  disabled={isLoadingEndpoints || !showEndpointConfig}
+                >
+                  <RefreshCw className={`h-4 w-4 ${isLoadingEndpoints ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+            </div>
 
+            {/* Conditional Endpoint Details Section */}
+            {showEndpointConfig && (
+              <div className="space-y-4 border rounded-lg p-4 bg-muted/10 shadow-sm">
+                <div className="space-y-2">
+                  <label htmlFor="url" className="text-sm font-medium flex justify-between">
+                    <span>Endpoint URL <span className="text-destructive">*</span></span>
+                    {formSubmitted && showEndpointConfig && !formData.endpoint?.url && (
+                      <span className="text-destructive text-xs">Required field</span>
+                    )}
+                  </label>
+                  <input
+                    id="url"
+                    name="url"
+                    value={formData.endpoint?.url}
+                    onChange={handleEndpointChange}
+                    placeholder="https://api.example.com/health"
+                    className={`w-full rounded-md border ${formSubmitted && showEndpointConfig && !formData.endpoint?.url ? 'border-destructive' : 'border-input'} bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 transition-all hover:border-muted-foreground/50`}
+                    required={showEndpointConfig}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <label htmlFor="method" className="text-sm font-medium">
-                      HTTP Method <span className="text-red-500">*</span>
+                      HTTP Method <span className="text-destructive">*</span>
                     </label>
                     <select
                       id="method"
                       name="method"
                       value={formData.endpoint?.method}
                       onChange={handleEndpointChange}
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 transition-all hover:border-muted-foreground/50"
                       required={showEndpointConfig}
                     >
                       <option value="GET">GET</option>
@@ -430,74 +476,83 @@ export function ServiceModal({
                       value={formData.endpoint?.timeout}
                       onChange={handleEndpointChange}
                       placeholder="5000"
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 transition-all hover:border-muted-foreground/50"
                       min="1000"
                       max="30000"
                     />
                   </div>
+                </div>
 
+                <div className="space-y-2">
+                  <label className="text-sm font-medium flex items-center justify-between">
+                    <span>Headers</span>
+                    <button
+                      type="button"
+                      onClick={addHeaderField}
+                      className="text-xs bg-muted/50 hover:bg-muted text-primary hover:text-primary/80 px-2 py-1 rounded-md transition-colors"
+                    >
+                      + Add Header
+                    </button>
+                  </label>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium flex items-center justify-between">
-                      <span>Headers</span>
-                      <button
-                        type="button"
-                        onClick={addHeaderField}
-                        className="text-xs text-primary hover:text-primary/80"
-                      >
-                        + Add Header
-                      </button>
-                    </label>
-                    <div className="space-y-2">
-                      {customHeaders.map((header, index) => (
-                        <div key={index} className="flex gap-2">
-                          <input
-                            placeholder="Header name"
-                            value={header.key}
-                            onChange={(e) => handleHeaderChange(index, 'key', e.target.value)}
-                            className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
-                          />
-                          <input
-                            placeholder="Value"
-                            value={header.value}
-                            onChange={(e) => handleHeaderChange(index, 'value', e.target.value)}
-                            className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
-                          />
-                          {index > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => removeHeaderField(index)}
-                              className="text-destructive hover:text-destructive/80"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                    {customHeaders.map((header, index) => (
+                      <div key={index} className="flex gap-2">
+                        <input
+                          placeholder="Header name"
+                          value={header.key}
+                          onChange={(e) => handleHeaderChange(index, 'key', e.target.value)}
+                          className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 transition-all hover:border-muted-foreground/50"
+                        />
+                        <input
+                          placeholder="Value"
+                          value={header.value}
+                          onChange={(e) => handleHeaderChange(index, 'value', e.target.value)}
+                          className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 transition-all hover:border-muted-foreground/50"
+                        />
+                        {index > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => removeHeaderField(index)}
+                            className="text-destructive hover:text-destructive/80 transition-colors hover:bg-destructive/10 rounded-md p-2"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 </div>
-              )}
-
-              <div className="flex justify-end space-x-2 pt-4">
-                <button
-                  type="button"
-                  onClick={() => onOpenChange(false)}
-                  className="px-4 py-2 border border-input bg-background hover:bg-accent hover:text-accent-foreground rounded-md text-sm font-medium"
-                  disabled={isSubmitting}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md text-sm font-medium"
-                  disabled={isSubmitting}
-                >
-                  {isSubmitting ? "Saving..." : initialData ? "Update Service" : "Register Service"}
-                </button>
               </div>
-            </form>
+            )}
           </div>
-        </div>
+
+          <div className="flex justify-end space-x-2 pt-4 border-t">
+            <button
+              type="button"
+              onClick={() => onOpenChange(false)}
+              className="px-4 py-2 border border-input bg-background hover:bg-accent hover:text-accent-foreground rounded-md text-sm font-medium transition-colors focus:ring-2 focus:ring-primary/25"
+              disabled={isSubmitting}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className={`px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium
+                ${isSubmitting ? 'opacity-80' : 'hover:bg-primary/90 hover:shadow-md'}
+                transition-all focus:ring-2 focus:ring-primary/50`}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (
+                <span className="flex items-center">
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  {initialData ? "Updating..." : "Registering..."}
+                </span>
+              ) : (
+                initialData ? "Update Service" : "Register Service"
+              )}
+            </button>
+          </div>
+        </form>
       </DialogContent>
     </Dialog>
   );

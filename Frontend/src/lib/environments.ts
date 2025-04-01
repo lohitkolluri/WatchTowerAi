@@ -192,6 +192,7 @@ export function useEnvironments(additionalEnvironments: string[] = []) {
     customEnvironments,
     allEnvironments,
     addEnvironment,
-    removeEnvironment
+    removeEnvironment,
+    setCustomEnvironments
   };
 }

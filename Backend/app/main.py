@@ -7,16 +7,15 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pymongo import ASCENDING, DESCENDING
 from pymongo.errors import ConnectionFailure
-from .database import MongoDB, connect_to_mongo, close_mongo_connection, perform_db_operation, Database, get_database
+from .database import MongoDB, connect_to_mongo, close_mongo_connection, perform_db_operation
 from .models import LogEntry, Alert, Metric
-from .schemas import LogEntryCreate, LogEntryRead, AlertRead, AlertUpdate, MetricRead, LogsResponse, LogsQueryParams
+from .schemas import LogEntryCreate, LogEntryRead, AlertRead, AlertUpdate, MetricRead
 from .services.log_processor import process_log
 from .services.gemini import check_gemini_api_availability
 from contextlib import asynccontextmanager
 import asyncio
 from bson import ObjectId
 import json
-from typing import Optional
 
 # Setup logger
 logging.basicConfig(level=logging.INFO)
@@ -312,12 +311,15 @@ async def add_custom_ui(request: Request, call_next):
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://watchtower-ai.vercel.app", "http://127.0.0.1:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://watchtowerai.com",
+        "https://app.watchtowerai.com"
+    ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-API-Key", "Accept", "Origin", "User-Agent", "X-Requested-With"],
-    max_age=3600,  # Cache preflight response for 1 hour
-    expose_headers=["X-Process-Time", "X-Request-ID"]
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Define API tags for better documentation organization
@@ -491,41 +493,54 @@ async def ingest_log(
 
 @app.get(
     "/logs",
-    response_model=LogsResponse,
+    response_model=list[LogEntryRead],
     tags=["logs"],
     summary="Retrieve log entries",
     description="Get log entries with optional filtering by service, environment, level, and time range.",
     response_description="List of matching log entries, sorted by timestamp (newest first)"
 )
 async def get_logs(
-    page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
-    service: Optional[str] = None,
-    level: Optional[str] = None,
-    startDate: Optional[datetime] = None,
-    endDate: Optional[datetime] = None,
-    search: Optional[str] = None,
-    db: Database = Depends(get_database)
+    service_name: str = Query(None, description="Filter by service name"),
+    environment: str = Query(None, description="Filter by environment (dev/staging/production)"),
+    level: str = Query(None, description="Filter by log level (INFO/WARN/ERROR)"),
+    start_time: datetime = Query(None, description="Filter logs after this time"),
+    end_time: datetime = Query(None, description="Filter logs before this time")
 ):
-    logs, total = await db.get_logs(
-        page=page,
-        limit=limit,
-        service=service,
-        level=level,
-        start_date=startDate,
-        end_date=endDate,
-        search=search
-    )
-    return {"logs": logs, "total": total}
+    logger.info("📄 Retrieving logs with filters")
 
-@app.get("/logs/services", response_model=list[str])
-async def get_services(db: Database = Depends(get_database)):
-    return await db.get_services_list()
+    # Build filter criteria
+    filter_criteria = {}
+    if service_name:
+        filter_criteria["service_name"] = service_name
+    if environment:
+        filter_criteria["environment"] = environment
+    if level:
+        filter_criteria["level"] = level
 
-@app.delete("/logs")
-async def clear_logs(db: Database = Depends(get_database)):
-    deleted_count = await db.clear_logs()
-    return {"message": f"Deleted {deleted_count} logs"}
+    # Date range filters
+    date_filter = {}
+    if start_time:
+        date_filter["$gte"] = start_time
+    if end_time:
+        date_filter["$lte"] = end_time
+    if date_filter:
+        filter_criteria["timestamp"] = date_filter
+
+    async def fetch_logs():
+        cursor = MongoDB.log_entries.find(filter_criteria).sort("timestamp", DESCENDING)
+        logs = await cursor.to_list(length=100)  # Limit to 100 logs
+        formatted_logs = []
+
+        # Convert data to match the schema
+        for log in logs:
+            log["_id"] = str(log["_id"])
+            formatted_logs.append(log)
+
+        return formatted_logs
+
+    logs = await perform_db_operation(fetch_logs)
+    logger.info(f"✅ {len(logs)} logs fetched")
+    return logs
 
 @app.get(
     "/alerts",
