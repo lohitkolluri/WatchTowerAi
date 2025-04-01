@@ -145,27 +145,7 @@
       <div class="remediation">
         <h3>AI-Generated Remediation:</h3>
         <div class="markdown-content">
-          {% set formatted_remediation = remediation | replace("**", "<strong>") | replace("**", "</strong>") %}
-          {% set formatted_remediation = formatted_remediation | replace("1. ", "<ol>
-            <li>") | replace("2. ", "</li>
-            <li>") | replace("3. ", "</li>
-            <li>") | replace("4. ", "</li>
-            <li>") %}
-              {% if "4. " in remediation %}
-              {% set formatted_remediation = formatted_remediation + "</li>
-          </ol>" %}
-          {% elif "3. " in remediation %}
-          {% set formatted_remediation = formatted_remediation + "</li>
-          </ol>" %}
-          {% elif "2. " in remediation %}
-          {% set formatted_remediation = formatted_remediation + "</li>
-          </ol>" %}
-          {% elif "1. " in remediation %}
-          {% set formatted_remediation = formatted_remediation + "</li>
-          </ol>" %}
-          {% endif %}
-          {% set formatted_remediation = formatted_remediation | replace("`", "<code>") | replace("`", "</code>") %}
-          {{ formatted_remediation | safe }}
+          {{ remediation | safe }}
         </div>
       </div>
     </div>

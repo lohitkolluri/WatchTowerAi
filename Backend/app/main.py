@@ -17,9 +17,56 @@ import asyncio
 from bson import ObjectId
 import json
 
+# Replace standard logging with Loguru
+from loguru import logger
+import sys
+from datetime import datetime
+
 # Setup logger
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("watchtower-ai")
+# Remove standard logging setup
+# logging.basicConfig(level=logging.INFO)
+# logger = logging.getLogger("watchtower-ai")
+
+# --- Loguru Configuration ---
+logger.remove()  # Remove default handler
+
+# Console Sink (human-readable)
+logger.add(
+    sys.stderr,
+    level="INFO",  # Set default level for console
+    format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+    colorize=True,
+    enqueue=True  # Make logging async
+)
+
+# File Sink (JSON format for structured logging)
+# Ensure 'logs' directory exists or create it
+logger.add(
+    "logs/watchtower_{time:YYYY-MM-DD}.log",
+    level="DEBUG",  # Log DEBUG level and above to file
+    rotation="1 day",  # Rotate daily
+    retention="7 days",  # Keep logs for 7 days
+    compression="zip",  # Compress rotated files
+    serialize=True,  # Output logs in JSON format
+    enqueue=True,  # Make logging asynchronous
+    backtrace=True,  # Include full stack trace on errors
+    diagnose=True  # Add extra context on errors
+)
+
+# Optional: Sentry Integration Placeholder (Uncomment/adapt if using Sentry)
+# import sentry_sdk
+# if settings.SENTRY_DSN: # Assuming SENTRY_DSN is in your settings
+#     logger.add(
+#         lambda msg: sentry_sdk.capture_message(msg),
+#         level="ERROR", # Send ERROR level and above to Sentry
+#         format="{message}" # Send only the message part
+#     )
+#     logger.info("📝 Configured Sentry logging sink.")
+
+logger.info("📝 Loguru logging configured.")
+logger.info("--------------------------------------------------")
+logger.info("🚀 Initializing WatchTowerAI...")
+logger.info("--------------------------------------------------")
 
 # Custom JSON encoder for handling MongoDB ObjectId
 class CustomJSONEncoder(json.JSONEncoder):
@@ -1190,31 +1237,75 @@ async def process_api_monitor(
                 {"$set": result}
             )
 
-            # Create a metric entry for this service's API performance
-            await MongoDB.metrics.update_one(
-                {
+            # Update metrics with monitoring data
+            try:
+                # Calculate error rate
+                error_rate = 0
+                if response and hasattr(response, "status_code"):
+                    # For error status codes, calculate error rate as 1 (100%)
+                    if response.status_code >= 400:
+                        error_rate = 1
+                    # For success status codes, calculate error rate as 0 (0%)
+                    else:
+                        error_rate = 0
+
+                metrics_filter = {
                     "service_name": service_name,
                     "environment": environment,
-                    "metric_type": "api_performance"
-                },
-                {
+                    "metric_type": "api_monitoring"
+                }
+
+                now = datetime.utcnow()
+                metrics_update = {
                     "$inc": {
                         "total_requests": 1,
-                        f"status_{status_code}": 1
-                    },
-                    "$push": {
-                        "recent_response_times": {
-                            "$each": [round(response_time * 1000, 2)],
-                            "$slice": -100  # Keep last 100 response times
-                        }
                     },
                     "$set": {
-                        "updated_at": datetime.utcnow(),
-                        "last_updated": datetime.utcnow()
+                        "updated_at": now  # Consistent field name for last update
                     }
-                },
-                upsert=True
-            )
+                }
+
+                # Add response time tracking
+                if response_time_ms:
+                    metrics_update["$push"] = {
+                        "recent_response_times": {
+                            "$each": [response_time_ms],
+                            "$slice": -5  # Keep only the 5 most recent values
+                        }
+                    }
+
+                    # Use MongoDB aggregation to calculate stats in the database
+                    metrics_update["$inc"]["sum_response_times"] = response_time_ms
+                    metrics_update["$inc"]["count_response_times"] = 1
+
+                # Update status code counters
+                if response and hasattr(response, "status_code"):
+                    status_code = response.status_code
+                    status_category = f"status_{status_code // 100}xx"
+                    if status_category not in metrics_update["$inc"]:
+                        metrics_update["$inc"][status_category] = 0
+                    metrics_update["$inc"][status_category] += 1
+
+                    # Track specific error codes
+                    if status_code >= 400:
+                        metrics_update["$inc"]["errors"] = 1
+                        metrics_update["$push"]["recent_errors"] = {
+                            "$each": [{
+                                "timestamp": now,
+                                "status_code": status_code,
+                                "url": url
+                            }],
+                            "$slice": -5  # Keep only the 5 most recent errors
+                        }
+
+                # Update metrics with upsert
+                await MongoDB.metrics.update_one(
+                    metrics_filter,
+                    metrics_update,
+                    upsert=True
+                )
+            except Exception as e:
+                logger.error(f"Error updating metrics: {e}")
 
             # Generate an alert if the status code doesn't match expected
             if alert_on_failure and status_code != expected_status_code:
@@ -2375,3 +2466,16 @@ async def catch_all(
             },
             status_code=500
         )
+
+# Add Request Logging Middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = datetime.utcnow()
+    logger.info(f"--> {request.method} {request.url.path} Start")
+    logger.debug(f"    Headers: {dict(request.headers)}")
+    response = await call_next(request)
+    process_time = (datetime.utcnow() - start_time).total_seconds()
+    logger.info(
+        f"<-- {request.method} {request.url.path} End - Status: {response.status_code} Duration: {process_time:.4f}s"
+    )
+    return response

@@ -1,10 +1,20 @@
 import logging
 import re
 import json
+import httpx
 from typing import Dict, List, Tuple, Any, Optional
 from datetime import datetime
+from ..config import settings
 
-logger = logging.getLogger(__name__)
+# Replace standard logging with Loguru
+from loguru import logger
+
+# Constants for Gemini API
+API_KEY = settings.GEMINI_API_KEY
+MODEL_NAME = "gemini-2.0-flash"  # Using the same model as in gemini.py
+
+# Remove standard logger
+# logger = logging.getLogger(__name__)
 
 # Common log patterns for classification
 LOG_PATTERNS = {
@@ -98,6 +108,7 @@ ENTITY_PATTERNS = {
 async def classify_log(log_data: Dict[str, Any]) -> Tuple[str, str, float, Dict[str, List[str]], List[str]]:
     """
     Classifies a log entry based on its content and returns the classification.
+    Uses a hybrid approach: pattern-based first, then Gemini AI if confidence is low.
 
     Args:
         log_data: The log data to classify
@@ -151,10 +162,115 @@ async def classify_log(log_data: Dict[str, Any]) -> Tuple[str, str, float, Dict[
     # Extract entities
     entities = extract_entities(text_to_classify)
 
+    # Check if confidence is below threshold or type is unknown, try Gemini AI classification
+    CONFIDENCE_THRESHOLD = 0.7
+    if confidence < CONFIDENCE_THRESHOLD or log_type == "unknown":
+        logger.info(f"Pattern confidence low ({confidence:.2f}), trying Gemini AI classification")
+
+        # Only attempt Gemini if we have an API key
+        if API_KEY:
+            try:
+                # Call Gemini API for classification
+                gemini_log_type, gemini_log_subtype, gemini_entities = await classify_with_gemini(text_to_classify)
+
+                # If Gemini returned valid type, use it
+                if gemini_log_type and gemini_log_type != "unknown":
+                    logger.info(f"Using Gemini classification: {gemini_log_type}/{gemini_log_subtype}")
+                    log_type = gemini_log_type
+                    log_subtype = gemini_log_subtype
+                    confidence = 0.9  # Set high confidence for Gemini results
+
+                    # Merge entities from both approaches, with Gemini taking precedence
+                    if gemini_entities and isinstance(gemini_entities, dict):
+                        for entity_type, values in gemini_entities.items():
+                            if entity_type not in entities:
+                                entities[entity_type] = []
+
+                            if isinstance(values, list):
+                                for value in values:
+                                    if value not in entities[entity_type]:
+                                        entities[entity_type].append(value)
+                            elif isinstance(values, str) and values not in entities[entity_type]:
+                                entities[entity_type].append(values)
+            except Exception as e:
+                logger.error(f"Error using Gemini for classification: {e}")
+
     # Generate tags
     tags = generate_tags(log_data, log_type, log_subtype, entities)
 
     return log_type, log_subtype, confidence, entities, tags
+
+async def classify_with_gemini(text: str) -> Tuple[str, str, Dict[str, List[str]]]:
+    """
+    Use Gemini AI to classify log entries when pattern-based approach has low confidence.
+
+    Args:
+        text: The log text to classify
+
+    Returns:
+        Tuple containing:
+        - log_type: Primary log type
+        - log_subtype: More specific subtype
+        - entities: Extracted entities
+    """
+    # Create prompt for Gemini
+    prompt = (
+        "You are a log analysis expert. Classify the following log entry into one primary type: "
+        "[database, auth, request, performance, security, infrastructure, application, unknown]. "
+        "If possible, provide a relevant subtype (e.g., connection_error, login_failure, timeout, high_latency, "
+        "injection, scaling, general). Extract key entities like IP addresses, user IDs, error codes, URLs, "
+        "file paths, resource IDs. Respond in JSON format with keys: 'log_type', 'log_subtype', 'entities'. "
+        f"Log Entry: ```{text}```"
+    )
+
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={API_KEY}"
+
+        payload = {
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }]
+        }
+
+        try:
+            response = await client.post(
+                url,
+                json=payload,
+                headers={"Content-Type": "application/json"}
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                if "candidates" in data and len(data["candidates"]) > 0:
+                    text_response = data["candidates"][0]["content"]["parts"][0]["text"]
+
+                    # Try to parse JSON response
+                    try:
+                        # Extract JSON from response (handling possible markdown code blocks)
+                        json_str = text_response
+                        if "```json" in json_str:
+                            json_str = json_str.split("```json")[1].split("```")[0].strip()
+                        elif "```" in json_str:
+                            json_str = json_str.split("```")[1].split("```")[0].strip()
+
+                        classification = json.loads(json_str)
+
+                        # Extract fields with defaults
+                        log_type = classification.get("log_type", "unknown").lower()
+                        log_subtype = classification.get("log_subtype", "general").lower()
+                        entities = classification.get("entities", {})
+
+                        return log_type, log_subtype, entities
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Could not parse Gemini response as JSON: {e}")
+                        logger.debug(f"Raw response: {text_response}")
+                else:
+                    logger.warning("No candidates in Gemini response")
+        except Exception as e:
+            logger.error(f"Error calling Gemini API: {e}")
+
+    # Return unknowns if we couldn't get a valid response
+    return "unknown", "unknown", {}
 
 def classify_by_pattern(text: str, patterns: Dict[str, List[str]]) -> Tuple[str, float]:
     """
@@ -200,13 +316,13 @@ def classify_subtype(text: str, primary_type: str, subtype_patterns: List[Tuple[
     return best_match, best_score
 
 def extract_entities(text: str) -> Dict[str, List[str]]:
-    """Extract structured entities from the log text."""
+    """Extract entities like IPs, URLs, emails from the log text"""
     entities = {}
 
     for entity_type, pattern in ENTITY_PATTERNS.items():
         matches = re.findall(pattern, text)
         if matches:
-            entities[entity_type] = matches
+            entities[entity_type] = list(set(matches))  # Remove duplicates
 
     return entities
 
@@ -216,34 +332,44 @@ def generate_tags(
     log_subtype: str,
     entities: Dict[str, List[str]]
 ) -> List[str]:
-    """Generate tags based on the log classification and content."""
+    """Generate tags based on log classification and content"""
     tags = []
 
-    # Add type and subtype as tags
-    if log_type != "unknown":
+    # Add log type and subtype as tags
+    if log_type and log_type != "unknown":
         tags.append(log_type)
+        if log_subtype and log_subtype != "unknown" and log_subtype != "general":
+            tags.append(log_subtype)
 
-    if log_subtype != "general" and log_subtype != "unknown":
-        tags.append(log_subtype)
-
-    # Add severity related tags
-    if "level" in log_data:
-        level = str(log_data.get("level", "")).upper()
-        if level in ["ERROR", "CRITICAL", "FATAL"]:
-            tags.append("error")
-
-        if level in ["CRITICAL", "FATAL"]:
-            tags.append("critical")
-
-    # Add service name if available
+    # Add service name as tag if available
     if "service_name" in log_data and log_data["service_name"]:
-        tags.append(f"service:{log_data['service_name']}")
+        service_tag = log_data["service_name"].lower().replace(" ", "_")
+        tags.append(service_tag)
 
-    # Add environment if available
+    # Add environment as tag if available
     if "environment" in log_data and log_data["environment"]:
-        tags.append(f"env:{log_data['environment']}")
+        env_tag = log_data["environment"].lower()
+        tags.append(env_tag)
 
-    return tags
+    # Add level as tag if it's ERROR or higher
+    if "level" in log_data and log_data["level"]:
+        level = log_data["level"].upper()
+        if level in ["ERROR", "CRITICAL", "FATAL"]:
+            tags.append(level.lower())
+            # Add 'critical' tag for high-severity issues
+            if level in ["CRITICAL", "FATAL"]:
+                tags.append("critical")
+
+    # Add some entity-based tags
+    if "ip_address" in entities:
+        tags.append("ip")
+    if "email" in entities:
+        tags.append("email")
+    if "url" in entities:
+        tags.append("url")
+
+    # Keep only unique tags
+    return list(set(tags))
 
 # Add additional classification methods as needed
 # For example, you could integrate with machine learning models or external services

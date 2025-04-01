@@ -269,6 +269,40 @@
         | replace("**", "<span class='bold-text'>") | replace("**", "</span>") | safe }}</div>
       {% endif %}
       {% endif %}
+
+      {% if metrics_data %}
+      <h3>Metrics Summary:</h3>
+      <table>
+        <tr>
+          <th>Service</th>
+          <th>Total</th>
+          <th>Errors</th>
+          <th>Status</th>
+        </tr>
+        {% for metric in metrics_data %}
+        <tr>
+          <td>{{ metric.service }}</td>
+          <td>{{ metric.total }}</td>
+          <td>
+            {% if metric.errors > 0 %}
+            <span class="metric-errors">{{ metric.errors }}</span>
+            {% else %}
+            0
+            {% endif %}
+          </td>
+          <td>
+            {% if metric.errors == 0 %}
+            <span class="status-icon">✅</span>
+            {% elif metric.errors / metric.total < 0.1 %}
+            <span class="status-icon">⚠️</span>
+            {% else %}
+            <span class="status-icon">🔴</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% endif %}
     </div>
 
     <div class="footer">
