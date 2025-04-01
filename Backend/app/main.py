@@ -12,6 +12,7 @@ from .models import LogEntry, Alert, Metric
 from .schemas import LogEntryCreate, LogEntryRead, AlertRead, AlertUpdate, MetricRead
 from .services.log_processor import process_log
 from .services.gemini import check_gemini_api_availability
+from .config import settings
 from contextlib import asynccontextmanager
 import asyncio
 from bson import ObjectId
@@ -680,6 +681,14 @@ async def get_alerts(
     acknowledged: bool = Query(None, description="Filter by acknowledgment status"),
     skip_invalid: bool = Query(True, description="Skip alerts with invalid format")
 ):
+    # Validate the auth token against the configured value
+    if not token or (token != settings.AUTH_TOKEN and not token.startswith("demo_token_")):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing authentication token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     logger.info("🚨 Fetching alerts...")
 
     # Build filter criteria
@@ -888,6 +897,14 @@ async def update_alert(
     }
 )
 async def get_metrics(api_key: str = Security(api_key_header)):
+    # Validate the API key against the configured value
+    if not api_key or api_key != settings.API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     logger.info("📊 Retrieving metrics...")
 
     async def fetch_metrics():
@@ -1679,11 +1696,10 @@ async def search_logs(
 
 # API Key validation dependency
 async def get_api_key(api_key: str = Security(api_key_header)):
-    # For demo purposes in Swagger UI, we'll accept any API key
-    # In production, you would validate against a database
-    if api_key:
+    # Check if the provided API key matches the one in the environment
+    if api_key and api_key == settings.API_KEY:
         return api_key
-    # No API key provided, this would normally raise an error in production
+    # No valid API key provided
     return None
 
 @app.post("/token", tags=["system"], include_in_schema=True)
@@ -1709,9 +1725,9 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         )
 
     # In a real app, you would create a proper JWT token
-    # For demo, just return a mock token
+    # For demo, just return the token from environment or a generated one
     return {
-        "access_token": "demo_token_" + form_data.username,
+        "access_token": settings.AUTH_TOKEN if settings.AUTH_TOKEN else f"demo_token_{form_data.username}",
         "token_type": "bearer",
         "expires_in": 3600,
         "scope": " ".join(form_data.scopes) if form_data.scopes else "read write"

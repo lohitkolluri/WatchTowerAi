@@ -206,168 +206,125 @@ npm run dev
 
 ### Prerequisites
 
-- Python 3.10+
-- MongoDB 4.4+
-- Google Gemini API Key
-- SMTP email server for alerts
+- Python 3.11+
+- Node.js 18+
+- MongoDB (local or cloud instance)
+- Git
 
-### Installation
+### Setup and Run
 
-1. Clone the repository:
+#### 1. Clone the Repository
+
 ```bash
-git clone https://github.com/lohitkolluri/WatchTowerAI.git
-cd WatchTowerAI
+git clone https://github.com/yourusername/WatchTowerAi.git
+cd WatchTowerAi
 ```
 
-2. Create and activate a virtual environment:
+#### 2. Backend Setup
+
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-4. Create a `.env` file from the template:
-```bash
-cp Backend/.env.example Backend/.env
-```
-
-5. Configure your environment variables in `.env`:
-```
-MONGODB_URI=mongodb://localhost:27017/watchtower
-GEMINI_API_KEY=your-gemini-api-key
-SMTP_SERVER=smtp.example.com
-SMTP_PORT=587
-SMTP_USERNAME=username
-SMTP_PASSWORD=password
-EMAIL_FROM=alerts@yourdomain.com
-ALERT_RECIPIENT=recipient@yourdomain.com
-```
-
-### Running the Application
-
-Start the app with Uvicorn:
-```bash
+# Navigate to Backend directory
 cd Backend
-uvicorn app.main:app --reload
+
+# Create a virtual environment
+python -m venv venv
+
+# Activate the virtual environment
+# On Windows
+venv\Scripts\activate
+# On macOS/Linux
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the backend server
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Access the interactive API documentation at:
+The backend API will be available at http://localhost:8000, with Swagger documentation at http://localhost:8000/docs.
+
+#### 3. Frontend Setup
+
+```bash
+# In a new terminal, navigate to Frontend directory
+cd Frontend
+
+# Install dependencies
+npm install
+# or if you prefer yarn
+yarn install
+
+# Run the development server
+npm run dev
+# or
+yarn dev
 ```
-http://localhost:8000/docs
+
+The frontend application will be available at http://localhost:3000.
+
+## API Endpoints
+
+The backend exposes the following key endpoints:
+
+- **GET /logs**: Get all logs
+- **POST /ingest**: Ingest new logs
+- **GET /alerts**: Get all alerts (requires token authentication)
+- **GET /metrics**: Get service metrics (requires API key)
+- **GET /api/endpoints**: List all registered API endpoints
+- **POST /api/endpoints**: Register a new API endpoint
+- **GET /health**: Check system health
+
+For more detailed API documentation, visit http://localhost:8000/docs when the backend is running.
+
+## Authentication
+
+The application uses two types of authentication:
+
+1. **API Key**: Used for metrics endpoint (X-API-Key header)
+2. **Bearer Token**: Used for alerts endpoint (Authorization header)
+
+You can configure the authentication tokens in the environment files:
+
+### Backend
+In `.env` and `.env.production`:
+```
+# Authentication
+API_KEY=your_api_key_here
+AUTH_TOKEN=your_auth_token_here
 ```
 
-## 📑 API Documentation
+### Frontend
+In `.env.development` and `.env.production`:
+```
+# Authentication
+NEXT_PUBLIC_API_KEY=your_api_key_here
+NEXT_PUBLIC_AUTH_TOKEN=your_auth_token_here
+```
 
-WatchTowerAI provides a comprehensive API for log ingestion, monitoring, and alerting:
+For testing purposes, the default values are:
+- API Key: `test_api_key`
+- Bearer Token: `demo_token_test`
 
-### Key Endpoints
+## Configuration
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/ingest` | POST | Ingest structured log entries |
-| `/logs` | GET | Retrieve and filter logs |
-| `/logs/search` | GET | Advanced search with classification filters |
-| `/alerts` | GET | Retrieve and filter alerts |
-| `/alerts/{alert_id}` | PATCH | Acknowledge alerts |
-| `/metrics` | GET | Get service performance metrics |
-| `/monitor/api` | POST | Register external API endpoints for monitoring |
-| `/monitor/api` | GET | View API monitoring results |
-| `/api/endpoints` | GET | List all registered API endpoints |
-| `/api/endpoints` | POST | Register a new API endpoint |
-| `/api/endpoints/{endpoint_id}` | GET | Get a specific API endpoint |
-| `/api/endpoints/{endpoint_id}` | PUT | Update an API endpoint |
-| `/api/endpoints/{endpoint_id}` | DELETE | Delete an API endpoint |
-| `/api/endpoints/{endpoint_id}/ping` | POST | Ping an endpoint and record results |
-| `/health` | GET | Simple health check endpoint |
-| `/{path:path}` | ANY | Universal monitoring endpoint (captures any request) |
+Both backend and frontend have their own configuration files:
 
-## 🔍 Intelligent Log Classification
+### Backend
 
-WatchTowerAI automatically classifies logs with:
+Configuration is done through `.env` files:
+- `.env` for development
+- `.env.production` for production
 
-### Classification Categories
+### Frontend
 
-- **Primary log type**:
-  - database, auth, request, performance, security, infrastructure
+Configuration is done through `.env` files:
+- `.env.development` for development
+- `.env.production` for production
 
-- **Subtype**:
-  - connection_error, login_failure, query_issues, etc.
+The most important configuration is `NEXT_PUBLIC_API_URL` which should point to your backend server.
 
-- **Entity extraction**:
-  - IP addresses, emails, user IDs, request IDs, timestamps, URLs
-
-- **Confidence scoring**:
-  - How certain the classification is (0.0-1.0)
-
-- **Auto-generated tags**:
-  - Based on content, severity, and classification
-
-This classification powers advanced search capabilities and better insights.
-
-## 🌐 Universal Endpoint Monitoring
-
-The system can monitor any API endpoint by:
-
-1. Capturing requests to undefined paths with `/{path:path}`
-2. Supporting all HTTP methods and content types
-3. Extracting and storing full request details (headers, body, query params)
-4. Automatically classifying and processing the captured requests
-5. Generating alerts for unexpected behavior
-
-WatchTowerAI provides a complete endpoint lifecycle management:
-- Register new endpoints via API or web interface
-- View all registered endpoints with status information
-- Update endpoint configuration as needed
-- Delete endpoints that are no longer needed
-- Automatic monitoring of registered endpoints
-- Detailed history of endpoint performance
-
-Simply direct traffic to any undefined path on your WatchTowerAI server with a `service_name` query parameter.
-
-## 📮 Alert Emails
-
-Emails are sent using HTML templates and include:
-- Service information
-- Alert details
-- AI-generated remediation suggestions
-
-Example templates provided:
-- `alert_email.html` - For critical alerts
-- `notification_email.html` - For general notifications
-
-## ⚙️ Configuration Options
-
-WatchTowerAI can be configured through environment variables:
-
-### Database Settings
-- `MONGODB_URI` - MongoDB connection string
-- `MONGODB_DB_NAME` - Database name
-- `ENABLE_FALLBACK_MODE` - Run without MongoDB for development
-
-### AI Integration
-- `GEMINI_API_KEY` - Google Gemini API key for AI analysis
-
-### Email Settings
-- `SMTP_SERVER` - SMTP server hostname
-- `SMTP_PORT` - SMTP server port
-- `SMTP_USERNAME` - SMTP authentication username
-- `SMTP_PASSWORD` - SMTP authentication password
-- `EMAIL_FROM` - Sender email address
-- `ALERT_RECIPIENT` - Recipient email address for alerts
-
-## 💡 Future Improvements
-
-- Machine learning-based classification enhancements
-- Real-time dashboard with metrics visualization
-- Webhook integrations for alerts (Slack, Discord, etc.)
-- Enhanced anomaly detection with historical pattern analysis
-- Dockerized deployment with Kubernetes support
-
-## 🛡️ License
+## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 

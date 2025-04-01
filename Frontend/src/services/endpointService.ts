@@ -3,7 +3,7 @@
 import { api } from '@/lib/api';
 import { EndpointData, EndpointResponse } from '@/types/common';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 // Helper function to handle API responses
 async function handleResponse<T>(response: Response, type?: string): Promise<T> {
@@ -39,8 +39,7 @@ export const endpointService = {
         const timestamp = Date.now();
         const urls = [
           `${API_URL}/api/endpoints?_t=${timestamp}`,
-          `${API_URL}/endpoints?_t=${timestamp}`,
-          `${API_URL}/api/services/endpoints?_t=${timestamp}`
+          `${API_URL}/api/endpoints?_t=${timestamp}` // Use the tested API endpoint
         ];
 
         // Add cache control and CORS headers
@@ -201,27 +200,6 @@ export const endpointService = {
         mode: 'cors',
         credentials: 'include'
       });
-
-      if (!response.ok) {
-        let errorMessage = "Failed to delete endpoint";
-
-        try {
-          const errorData = await response.json();
-          errorMessage = errorData.detail || errorMessage;
-        } catch (e) {
-          // JSON parsing failed, use status text
-          errorMessage = response.statusText || errorMessage;
-        }
-
-        if (response.status === 404) {
-          throw new Error("Endpoint not found or already deleted");
-        } else if (response.status === 500) {
-          throw new Error("Server error while deleting endpoint");
-        } else {
-          throw new Error(errorMessage);
-        }
-      }
-
       return handleResponse<void>(response, 'void');
     } catch (error) {
       console.error(`Error deleting endpoint ${id}:`, error);
@@ -229,48 +207,45 @@ export const endpointService = {
     }
   },
 
-  pingEndpoint: async (id: string): Promise<void> => {
+  // Add a method to test the connection to an API endpoint
+  testConnection: async (url: string, method: string = 'GET'): Promise<{ success: boolean, message: string, responseTime?: number }> => {
     try {
-      // Ensure we have a valid ID
-      if (!id) {
-        throw new Error("Endpoint ID is required");
-      }
-
-      // Make the API call
-      const response = await fetch(`${API_URL}/api/endpoints/${id}/ping`, {
-        method: 'POST',
+      const startTime = Date.now();
+      const response = await fetch(url, {
+        method,
+        mode: 'no-cors',
+        cache: 'no-cache',
         headers: {
-          'Content-Type': 'application/json',
+          'Accept': 'application/json',
         },
-        mode: 'cors',
-        credentials: 'include'
+        redirect: 'follow',
+        referrerPolicy: 'no-referrer',
+      }).catch(error => {
+        throw new Error(`Connection failed: ${error.message}`);
       });
 
-      // Handle non-200 responses
-      if (!response.ok) {
-        let errorMessage = "Failed to ping endpoint";
+      const endTime = Date.now();
+      const responseTime = endTime - startTime;
 
-        try {
-          const errorData = await response.json();
-          errorMessage = errorData.detail || errorMessage;
-        } catch (e) {
-          // JSON parsing failed, use status text
-          errorMessage = response.statusText || errorMessage;
-        }
-
-        if (response.status === 404) {
-          throw new Error("Error: Endpoint not found. Please check if the endpoint still exists.");
-        } else if (response.status === 500) {
-          throw new Error("Server error while pinging endpoint. Please try again later.");
-        } else {
-          throw new Error(errorMessage);
-        }
+      if (response.status >= 200 && response.status < 300) {
+        return {
+          success: true,
+          message: `Connection successful (${response.status} ${response.statusText})`,
+          responseTime
+        };
       }
 
-      return handleResponse<void>(response, 'void');
+      return {
+        success: false,
+        message: `Connection failed with status: ${response.status} ${response.statusText}`,
+        responseTime
+      };
     } catch (error) {
-      console.error(`Error pinging endpoint ${id}:`, error);
-      throw error;
+      console.error('Error testing connection:', error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Unknown error occurred during connection test'
+      };
     }
-  },
+  }
 };

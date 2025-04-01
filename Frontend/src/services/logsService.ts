@@ -1,12 +1,20 @@
 import axios from 'axios';
 
 export interface Log {
+  _id: string;
   timestamp: string;
-  level: 'info' | 'warning' | 'error';
+  level: string;
   message: string;
-  service: string;
-  endpoint?: string;
-  metadata?: Record<string, any>;
+  service_name: string;
+  environment: string;
+  error_code?: string;
+  correlation_id?: string;
+  raw_payload?: any;
+  log_type?: string;
+  log_subtype?: string;
+  confidence_score?: number;
+  entities?: Record<string, any>;
+  tags?: string[];
 }
 
 export interface LogsResponse {
@@ -17,11 +25,18 @@ export interface LogsResponse {
 export interface LogsQueryParams {
   page?: number;
   limit?: number;
-  service?: string;
+  service_name?: string;
   level?: string;
   startDate?: string;
   endDate?: string;
   search?: string;
+  log_type?: string;
+  log_subtype?: string;
+  confidence_min?: number;
+  entity_type?: string;
+  entity_value?: string;
+  tag?: string;
+  environment?: string;
 }
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -66,7 +81,7 @@ export const logsService = {
                      Array.isArray(data.data) ? data.data.length : 0
       });
 
-      // Handle different response formats
+      // Handle direct array response from backend
       if (Array.isArray(data)) {
         return { logs: data, total: data.length };
       }
@@ -119,6 +134,33 @@ export const logsService = {
     } catch (error) {
       console.error('Error fetching services list:', error);
       throw error;
+    }
+  },
+
+  async searchLogs(searchParams: LogsQueryParams = {}): Promise<LogsResponse> {
+    try {
+      // Convert search params to URL search params
+      const params = new URLSearchParams();
+      Object.entries(searchParams).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          params.append(key, String(value));
+        }
+      });
+
+      const requestUrl = `${BASE_URL}/logs/search?${params.toString()}`;
+      console.log('Searching logs with:', requestUrl);
+
+      const response = await axios.get(requestUrl);
+
+      const data = response.data;
+      if (Array.isArray(data)) {
+        return { logs: data, total: data.length };
+      }
+
+      return { logs: [], total: 0 };
+    } catch (error) {
+      console.error('Error searching logs:', error);
+      return { logs: [], total: 0 };
     }
   },
 

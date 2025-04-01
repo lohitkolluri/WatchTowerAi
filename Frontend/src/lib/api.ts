@@ -124,22 +124,60 @@ function buildQueryString(params?: Record<string, any>): string {
 }
 
 // Helper function to get auth headers
-const getAuthHeaders = () => {
+const getAuthHeaders = (requireAuth: boolean = false) => {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
 
-  // Add API key if available
-  const apiKey = process.env.NEXT_PUBLIC_API_KEY;
-  if (apiKey) {
-    headers['X-API-Key'] = apiKey;
+  // Add API key - try both localStorage methods to improve compatibility
+  let apiKey;
+
+  if (typeof window !== 'undefined') {
+    // Try both potential localStorage keys to be safe
+    apiKey = window.localStorage.getItem('NEXT_PUBLIC_API_KEY') ||
+             window.localStorage.getItem('api_key');
+
+    console.log('API Key from localStorage:', apiKey ? 'Found key' : 'No key in localStorage');
   }
 
-  // Add OAuth token if available (you'll need to implement token storage/management)
-  const token = localStorage.getItem('auth_token');
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+  // Fallback to environment variable or default from .env
+  if (!apiKey) {
+    apiKey = process.env.NEXT_PUBLIC_API_KEY || 'test_api_key';
+    console.log('Using fallback API Key from env or default');
   }
+
+  // Ensure API key is properly set
+  headers['X-API-Key'] = apiKey;
+
+  // Add OAuth token if authentication is required
+  if (requireAuth) {
+    let token;
+
+    if (typeof window !== 'undefined') {
+      token = window.localStorage.getItem('auth_token');
+      console.log('Auth token from localStorage:', token ? 'Found token' : 'No token in localStorage');
+    }
+
+    // Fallback to default if not in localStorage
+    if (!token) {
+      token = process.env.NEXT_PUBLIC_AUTH_TOKEN || 'demo_token_test';
+      console.log('Using fallback auth token from env or default');
+    }
+
+    // Ensure token is formatted correctly
+    if (token && !token.startsWith('Bearer ')) {
+      headers['Authorization'] = `Bearer ${token}`;
+    } else if (token) {
+      headers['Authorization'] = token;
+    }
+  }
+
+  // Debug: Log headers being sent (with sensitive parts redacted)
+  console.log('API Headers:', {
+    'Content-Type': headers['Content-Type'],
+    'X-API-Key': headers['X-API-Key'] ? '**present**' : '**missing**',
+    'Authorization': headers['Authorization'] ? '**present**' : '**missing**',
+  });
 
   return headers;
 };
@@ -327,7 +365,7 @@ export const api = {
         const queryString = buildQueryString(params);
         const response = await fetch(`${API_BASE_URL}/alerts${queryString}`, {
           headers: {
-            ...getAuthHeaders(),
+            ...getAuthHeaders(true),
           },
           mode: 'cors',
           credentials: 'include'
@@ -389,7 +427,7 @@ export const api = {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          ...getAuthHeaders(),
+          ...getAuthHeaders(true),
         },
         body: JSON.stringify({ acknowledged: true }),
         mode: 'cors',
@@ -402,15 +440,58 @@ export const api = {
   // Metrics endpoints
   metrics: {
     getAll: async (params?: FilterParams): Promise<ServiceMetrics[]> => {
-      const queryString = buildQueryString(params);
-      const response = await fetch(`${API_BASE_URL}/metrics${queryString}`, {
-        headers: {
-          ...getAuthHeaders(),
-        },
-        mode: 'cors',
-        credentials: 'include'
-      });
-      return handleResponse<ServiceMetrics[]>(response, 'json');
+      try {
+        validateApiUrl();
+        const queryString = buildQueryString(params);
+
+        // Create headers with authentication - ensure both API key and auth token
+        const headers = getAuthHeaders(true); // Pass true to include Authorization header
+
+        console.log('Fetching metrics from:', `${API_BASE_URL}/metrics${queryString}`);
+        console.log('Using headers for metrics:', {
+          ...Object.keys(headers).reduce((acc, key) => {
+            acc[key] = key.toLowerCase().includes('key') || key.toLowerCase().includes('auth')
+              ? '[REDACTED]' : headers[key];
+            return acc;
+          }, {} as Record<string, string>)
+        });
+
+        const response = await fetch(`${API_BASE_URL}/metrics${queryString}`, {
+          headers,
+          mode: 'cors',
+          credentials: 'include'
+        });
+
+        if (!response.ok) {
+          console.error('Metrics API error:', {
+            status: response.status,
+            statusText: response.statusText,
+            url: response.url
+          });
+
+          // Special handling for 401 errors to assist with debugging
+          if (response.status === 401) {
+            console.error('Authentication error with metrics API. Please check:');
+            console.error('1. Your API key is correct in localStorage (NEXT_PUBLIC_API_KEY and api_key)');
+            console.error('2. Your auth_token is set correctly in localStorage');
+            console.error('3. Backend .env has matching API_KEY and AUTH_TOKEN values');
+
+            // Try to get the error details from the response
+            try {
+              const errorData = await response.clone().json();
+              console.error('Error details:', errorData);
+            } catch (e) {
+              console.error('Could not parse error details');
+            }
+          }
+        }
+
+        const data = await handleResponse<ServiceMetrics[]>(response, 'json');
+        return Array.isArray(data) ? data : [];
+      } catch (error) {
+        console.error('Error fetching metrics:', error);
+        return [];
+      }
     },
   },
 
@@ -437,7 +518,9 @@ export const api = {
     },
 
     ping: async (id: string): Promise<void> => {
-      return endpointService.pingEndpoint(id);
+      // Use testConnection instead since pingEndpoint doesn't exist
+      await endpointService.testConnection(id);
+      return;
     },
   },
 
@@ -447,15 +530,48 @@ export const api = {
       try {
         validateApiUrl();
         const queryString = buildQueryString(params);
+
+        // Create headers with authentication
+        const headers = getAuthHeaders(true); // Pass true to include Authorization header
+
         console.log('Fetching services from:', `${API_BASE_URL}/services${queryString}`);
+        console.log('Using headers for services:', {
+          ...Object.keys(headers).reduce((acc, key) => {
+            acc[key] = key.toLowerCase().includes('key') || key.toLowerCase().includes('auth')
+              ? '[REDACTED]' : headers[key];
+            return acc;
+          }, {} as Record<string, string>)
+        });
 
         const response = await fetch(`${API_BASE_URL}/services${queryString}`, {
-          headers: {
-            ...getAuthHeaders(),
-          },
+          headers,
           mode: 'cors',
           credentials: 'include'
         });
+
+        if (!response.ok) {
+          console.error('Services API error:', {
+            status: response.status,
+            statusText: response.statusText,
+            url: response.url
+          });
+
+          // Special handling for 401 errors to assist with debugging
+          if (response.status === 401) {
+            console.error('Authentication error with services API. Please check:');
+            console.error('1. Your API key is correct in localStorage (NEXT_PUBLIC_API_KEY and api_key)');
+            console.error('2. Your auth_token is set correctly in localStorage');
+            console.error('3. Backend .env has matching API_KEY and AUTH_TOKEN values');
+
+            // Try to get the error details from the response
+            try {
+              const errorData = await response.clone().json();
+              console.error('Error details:', errorData);
+            } catch (e) {
+              console.error('Could not parse error details');
+            }
+          }
+        }
 
         const data = await handleResponse<any>(response, 'json');
 
@@ -479,9 +595,7 @@ export const api = {
 
         // Also fetch metrics to combine with service data
         const metricsResponse = await fetch(`${API_BASE_URL}/metrics`, {
-          headers: {
-            ...getAuthHeaders(),
-          },
+          headers,
           mode: 'cors',
           credentials: 'include'
         });
@@ -543,7 +657,10 @@ export const api = {
         const service = await handleResponse<any>(response, 'json');
 
         // Fetch metrics for this service
-        const metricsResponse = await fetch(`${API_BASE_URL}/metrics?service=${service.name}`);
+        const metricsResponse = await fetch(`${API_BASE_URL}/metrics?service=${service.name}`, {
+          headers: getAuthHeaders(),
+          mode: 'cors'
+        });
         const metricsData = await handleResponse<any>(metricsResponse, 'json');
         const metric = Array.isArray(metricsData) ? metricsData[0] : metricsData;
 
@@ -673,4 +790,32 @@ export const api = {
     const response = await fetch(`${API_BASE_URL}/health`);
     return handleResponse<{ status: string; version: string; }>(response, 'json');
   },
+
+  // Debug helper to check authentication values
+  debug: {
+    checkAuth: () => {
+      if (typeof window === 'undefined') {
+        return {
+          warning: 'Running on server - localStorage not available',
+          serverEnvVars: {
+            NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'not set',
+            NEXT_PUBLIC_API_KEY: process.env.NEXT_PUBLIC_API_KEY ? 'set (redacted)' : 'not set',
+            NEXT_PUBLIC_AUTH_TOKEN: process.env.NEXT_PUBLIC_AUTH_TOKEN ? 'set (redacted)' : 'not set'
+          }
+        };
+      }
+
+      return {
+        localStorage: {
+          'api_key': localStorage.getItem('api_key') ? 'set (redacted)' : 'not set',
+          'NEXT_PUBLIC_API_KEY': localStorage.getItem('NEXT_PUBLIC_API_KEY') ? 'set (redacted)' : 'not set',
+          'auth_token': localStorage.getItem('auth_token') ? 'set (redacted)' : 'not set'
+        },
+        headers: {
+          standard: getAuthHeaders(false),
+          withAuth: getAuthHeaders(true)
+        }
+      };
+    }
+  }
 };

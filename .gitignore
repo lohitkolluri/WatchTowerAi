@@ -98,3 +98,7 @@ pids
 .vscode/
 .idea/
 Test
+
+Backend/.env.production
+Frontend/.env.development
+Frontend/.env.production

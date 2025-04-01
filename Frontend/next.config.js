@@ -11,6 +11,42 @@ const nextConfig = {
   experimental: {
     optimizeCss: true,
   },
+  async rewrites() {
+    return [
+      {
+        source: '/api/:path*',
+        destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/:path*`,
+      },
+      {
+        source: '/logs/:path*',
+        destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/logs/:path*`,
+      },
+      {
+        source: '/alerts/:path*',
+        destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/alerts/:path*`,
+      },
+      {
+        source: '/metrics/:path*',
+        destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/metrics/:path*`,
+      },
+      {
+        source: '/services/:path*',
+        destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/services/:path*`,
+      },
+      {
+        source: '/settings/:path*',
+        destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/settings/:path*`,
+      },
+      {
+        source: '/ingest',
+        destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/ingest`,
+      },
+      {
+        source: '/health',
+        destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/health`,
+      }
+    ];
+  },
   webpack: (config, { dev, isServer }) => {
     // Optimization for production builds
     if (!dev && !isServer) {
