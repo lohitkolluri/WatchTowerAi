@@ -101,6 +101,32 @@ const CopyButton = ({ text }: { text: string }) => {
   );
 };
 
+interface FormattedMetadata {
+  key: string;
+  value: string | unknown;
+}
+
+const formatData = (data: unknown): FormattedMetadata[] | string => {
+  try {
+    if (typeof data === 'object' && data !== null) {
+      // Format each field in a more readable way
+      const formattedData = Object.entries(data).map(([key, value]): FormattedMetadata => {
+        let formattedValue: string | unknown = value;
+        if (typeof value === 'object' && value !== null) {
+          formattedValue = JSON.stringify(value, null, 2);
+        } else if (typeof value === 'string' && value.length > 100) {
+          formattedValue = value.substring(0, 100) + '...';
+        }
+        return { key, value: formattedValue };
+      });
+      return formattedData;
+    }
+    return JSON.stringify(data, null, 2);
+  } catch (e) {
+    return String(data);
+  }
+};
+
 export default function LogsPage() {
   const { toast } = useToast();
   const searchParams = useSearchParams();
@@ -417,14 +443,6 @@ export default function LogsPage() {
     }
   };
 
-  const formatData = (data: any) => {
-    try {
-      return JSON.stringify(data, null, 2);
-    } catch (e) {
-      return String(data);
-    }
-  };
-
   // Calculate pagination information
   const startItem = (filters.page - 1) * filters.limit + 1;
   const endItem = Math.min(filters.page * filters.limit, total);
@@ -512,9 +530,6 @@ export default function LogsPage() {
                 <Search className="h-4 w-4 mr-1.5 text-muted-foreground" />
                 <span>Filters</span>
               </CardTitle>
-              <CardDescription>
-                Filter logs by service, level, date, or search text
-              </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -763,14 +778,29 @@ export default function LogsPage() {
 
       {/* Log Details Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col shadow-xl">
+        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col shadow-xl">
           <DialogTitle className="sr-only">Log Details</DialogTitle>
           {selectedLog && (
             <>
               <div className="flex justify-between items-start mb-4">
                 <div className="flex flex-col space-y-2">
-                  <div className="flex items-center">
+                  <div className="flex items-center gap-2">
                     {getLevelBadge(selectedLog.level)}
+                    {selectedLog.log_type && (
+                      <Badge variant="outline" className="capitalize">
+                        {selectedLog.log_type}
+                        {selectedLog.log_subtype && ` / ${selectedLog.log_subtype}`}
+                      </Badge>
+                    )}
+                    {selectedLog.confidence_score !== undefined && (
+                      <Badge variant="outline" className={cn(
+                        selectedLog.confidence_score >= 0.8 ? "bg-green-500/10 text-green-600" :
+                          selectedLog.confidence_score >= 0.6 ? "bg-yellow-500/10 text-yellow-600" :
+                            "bg-red-500/10 text-red-600"
+                      )}>
+                        {Math.round(selectedLog.confidence_score * 100)}% confidence
+                      </Badge>
+                    )}
                   </div>
                   <div className="text-sm text-muted-foreground font-mono">
                     {format(new Date(selectedLog.timestamp), 'MMM d, yyyy, h:mm:ss a')}
@@ -813,26 +843,157 @@ export default function LogsPage() {
                   </div>
                 </div>
 
-                <div>
-                  <h3 className="text-base font-semibold text-primary mb-2 flex items-center">
-                    <FileJson className="h-4 w-4 mr-1.5" />
-                    Metadata
-                  </h3>
-                  <ScrollArea className="max-h-[40vh] overflow-auto">
-                    <div className="bg-muted/50 p-4 rounded-md border shadow-sm hover:shadow-md transition-all">
-                      {selectedLog.metadata ? (
-                        <div className="flex justify-between items-start">
-                          <pre className="whitespace-pre-wrap break-words text-sm font-mono">
-                            {formatData(selectedLog.metadata)}
-                          </pre>
-                          <CopyButton text={formatData(selectedLog.metadata)} />
+                {selectedLog.error_code && (
+                  <div>
+                    <h3 className="text-base font-semibold text-primary mb-2 flex items-center">
+                      <AlertCircle className="h-4 w-4 mr-1.5 text-destructive" />
+                      Error Details
+                    </h3>
+                    <div className="bg-destructive/5 p-4 rounded-md border border-destructive/20 shadow-sm">
+                      <div className="flex justify-between items-start">
+                        <div className="space-y-2">
+                          <div className="font-mono text-sm text-destructive">
+                            Error Code: {selectedLog.error_code}
+                          </div>
+                          {selectedLog.correlation_id && (
+                            <div className="font-mono text-sm text-muted-foreground">
+                              Correlation ID: {selectedLog.correlation_id}
+                            </div>
+                          )}
                         </div>
-                      ) : (
-                        <p className="text-sm text-muted-foreground italic">No metadata available</p>
-                      )}
+                        <CopyButton text={selectedLog.error_code} />
+                      </div>
                     </div>
-                  </ScrollArea>
-                </div>
+                  </div>
+                )}
+
+                {selectedLog.tags && selectedLog.tags.length > 0 && (
+                  <div>
+                    <h3 className="text-base font-semibold text-primary mb-2 flex items-center">
+                      <Server className="h-4 w-4 mr-1.5" />
+                      Tags
+                    </h3>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedLog.tags.map((tag, index) => (
+                        <Badge key={index} variant="secondary" className="capitalize">
+                          {tag}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {selectedLog.entities && Object.keys(selectedLog.entities).length > 0 && (
+                  <div>
+                    <h3 className="text-base font-semibold text-primary mb-2 flex items-center">
+                      <FileJson className="h-4 w-4 mr-1.5" />
+                      Entities
+                    </h3>
+                    <ScrollArea className="max-h-[20vh]">
+                      <div className="bg-muted/50 p-4 rounded-md border shadow-sm">
+                        <div className="grid grid-cols-2 gap-4">
+                          {Object.entries(selectedLog.entities).map(([key, value]) => (
+                            <div key={key} className="space-y-1">
+                              <h4 className="text-sm font-medium text-muted-foreground capitalize">{key}</h4>
+                              <div className="bg-background/50 p-2 rounded border">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-sm font-mono break-all">
+                                    {typeof value === 'string' ? value : JSON.stringify(value)}
+                                  </span>
+                                  <CopyButton text={typeof value === 'string' ? value : JSON.stringify(value)} />
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </ScrollArea>
+                  </div>
+                )}
+
+                {selectedLog.metadata && (
+                  <div>
+                    <h3 className="text-base font-semibold text-primary mb-2 flex items-center">
+                      <FileJson className="h-4 w-4 mr-1.5" />
+                      Metadata
+                    </h3>
+                    <ScrollArea className="max-h-[40vh]">
+                      <div className="bg-muted/50 p-4 rounded-md border shadow-sm">
+                        <div className="space-y-4">
+                          {typeof selectedLog.metadata === 'object' && selectedLog.metadata !== null ? (
+                            (() => {
+                              const formatted = formatData(selectedLog.metadata);
+                              if (Array.isArray(formatted)) {
+                                return formatted.map((item: FormattedMetadata, index: number) => (
+                                  <div key={`${item.key}-${index}`} className="space-y-1">
+                                    <div className="flex items-center justify-between">
+                                      <h4 className="text-sm font-medium text-muted-foreground">{item.key}</h4>
+                                      <CopyButton text={typeof item.value === 'string' ? item.value : JSON.stringify(item.value)} />
+                                    </div>
+                                    <div className="bg-background/50 p-2 rounded border">
+                                      {typeof item.value === 'string' ? (
+                                        <p className="text-sm font-mono break-words whitespace-pre-wrap">{item.value}</p>
+                                      ) : (
+                                        <pre className="text-sm font-mono break-words whitespace-pre-wrap">
+                                          {JSON.stringify(item.value, null, 2)}
+                                        </pre>
+                                      )}
+                                    </div>
+                                  </div>
+                                ));
+                              }
+                              // If not an array, it's a string
+                              const formattedString = formatted as string;
+                              return (
+                                <div className="flex justify-between items-start">
+                                  <pre className="whitespace-pre-wrap break-words text-sm font-mono">
+                                    {formattedString}
+                                  </pre>
+                                  <CopyButton text={formattedString} />
+                                </div>
+                              );
+                            })() as React.ReactNode
+                          ) : (
+                            <div className="flex justify-between items-start">
+                              <pre className="whitespace-pre-wrap break-words text-sm font-mono">
+                                {String(selectedLog.metadata)}
+                              </pre>
+                              <CopyButton text={String(selectedLog.metadata)} />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </ScrollArea>
+                  </div>
+                )}
+
+                {selectedLog.raw_payload && (
+                  <div>
+                    <h3 className="text-base font-semibold text-primary mb-2 flex items-center">
+                      <FileJson className="h-4 w-4 mr-1.5" />
+                      Raw Payload
+                    </h3>
+                    <div className="bg-muted/50 p-4 rounded-md border shadow-sm">
+                      <div className="flex justify-between items-start gap-4">
+                        <ScrollArea className="max-h-[40vh] w-full">
+                          <pre className="whitespace-pre-wrap break-words text-sm font-mono custom-scrollbar">
+                            {typeof selectedLog.raw_payload === 'string'
+                              ? selectedLog.raw_payload
+                              : JSON.stringify(selectedLog.raw_payload, null, 2)}
+                          </pre>
+                        </ScrollArea>
+                        <div className="flex-shrink-0">
+                          <CopyButton
+                            text={typeof selectedLog.raw_payload === 'string'
+                              ? selectedLog.raw_payload
+                              : JSON.stringify(selectedLog.raw_payload, null, 2)
+                            }
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {selectedLog.endpoint && (
                   <div>
@@ -857,9 +1018,19 @@ export default function LogsPage() {
                     <p className="text-sm">{selectedLog.service}</p>
                   </div>
                   <div>
+                    <h3 className="text-xs font-medium mb-1 text-muted-foreground">Environment</h3>
+                    <p className="text-sm">{selectedLog.environment || 'production'}</p>
+                  </div>
+                  <div>
                     <h3 className="text-xs font-medium mb-1 text-muted-foreground">Timestamp</h3>
                     <p className="text-sm font-mono">{format(new Date(selectedLog.timestamp), 'MMM d, yyyy, h:mm:ss a')}</p>
                   </div>
+                  {selectedLog.correlation_id && (
+                    <div>
+                      <h3 className="text-xs font-medium mb-1 text-muted-foreground">Correlation ID</h3>
+                      <p className="text-sm font-mono">{selectedLog.correlation_id}</p>
+                    </div>
+                  )}
                 </div>
               </div>
             </>

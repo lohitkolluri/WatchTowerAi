@@ -900,7 +900,6 @@ export default function EndpointsPage() {
               <Filter className="h-5 w-5 text-primary" />
               Filters
             </CardTitle>
-            <CardDescription>Filter endpoints by service, environment, or search by content</CardDescription>
           </CardHeader>
           <CardContent className="pt-6">
             <div className="flex flex-col space-y-4">
