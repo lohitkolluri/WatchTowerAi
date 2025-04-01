@@ -43,6 +43,8 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { normalizeEnvironment, getEnvironmentLabel, useEnvironments } from "@/lib/environments";
+import { Skeleton } from "@/components/ui/skeleton";
+import { debounce } from "lodash";
 
 interface SMTPConfig {
   host: string;
@@ -124,7 +126,8 @@ export default function AlertsPage() {
     use_tls: true,
   });
   const [isSaving, setIsSaving] = useState(false);
-  const [alerts, setAlerts] = useState<FormattedAlert[]>([]);
+  const [allAlerts, setAllAlerts] = useState<FormattedAlert[]>([]);
+  const [filteredAlerts, setFilteredAlerts] = useState<FormattedAlert[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isAutoRefresh, setIsAutoRefresh] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -160,90 +163,165 @@ export default function AlertsPage() {
     }));
   }, []);
 
-  const fetchAlerts = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      // Build query parameters for server-side filtering
-      const queryParams: any = {
-        page: pagination.page,
-        limit: pagination.limit
-      };
+  const applyFilters = useCallback((alerts: FormattedAlert[], currentFilters: AlertFilters) => {
+    return alerts.filter(alert => {
+      if (currentFilters.search) {
+        const searchLower = currentFilters.search.toLowerCase();
+        const titleMatch = (alert.title || '').toLowerCase().includes(searchLower);
+        const serviceMatch = (alert.service || '').toLowerCase().includes(searchLower);
+        const environmentMatch = (alert.environment || '').toLowerCase().includes(searchLower);
+        const severityMatch = (alert.severity || '').toLowerCase().includes(searchLower);
+        const descriptionMatch = (alert.description || '').toLowerCase().includes(searchLower);
+        const remediationMatch = (alert.remediation || '').toLowerCase().includes(searchLower);
 
-      // Only add filter params if they're not the default "all" value
-      if (filters.search) queryParams.search = filters.search;
-      if (filters.service !== "all") queryParams.service = filters.service;
-      if (filters.environment !== "all") queryParams.environment = filters.environment;
-      if (filters.severity !== "all") queryParams.severity = filters.severity;
-      if (filters.status !== "all") queryParams.status = filters.status;
-
-      // Fetch alerts with filters
-      const alertsData = await api.alerts.getAll(queryParams);
-
-      // Check if alertsData and alertsData.data exist and is an array
-      const alertsArray = alertsData?.data || [];
-      const formattedAlerts = formatAlerts(alertsArray);
-
-      setAlerts(formattedAlerts);
-
-      // Update pagination information
-      setPagination({
-        page: alertsData.page || 1,
-        limit: alertsData.pageSize || 20,
-        total: alertsData.total || 0,
-        totalPages: alertsData.totalPages || 1
-      });
-
-      // Update unique services and environments for filter dropdowns
-      // We can either fetch these from a separate endpoint, or update from the first page of results
-      if (pagination.page === 1 || services.length === 0) {
-        const uniqueServices = [...new Set(formattedAlerts.map((alert: FormattedAlert) => alert.service))] as string[];
-        const uniqueEnvironments = [...new Set(formattedAlerts.map((alert: FormattedAlert) => alert.environment))] as string[];
-        setServices(uniqueServices);
-        setEnvironments(uniqueEnvironments);
+        if (!titleMatch && !serviceMatch && !environmentMatch &&
+          !severityMatch && !descriptionMatch && !remediationMatch) {
+          return false;
+        }
       }
 
-      setError(null);
-    } catch (err) {
-      console.error("Failed to fetch alerts:", err);
-      setError(err instanceof Error ? err.message : "Failed to fetch alerts");
-      toast.error("Failed to fetch alerts");
-      // Set empty arrays when error occurs
-      setAlerts([]);
-      setServices([]);
-      setEnvironments([]);
-      setPagination({
-        page: 1,
-        limit: 20,
-        total: 0,
-        totalPages: 1
+      if (currentFilters.service !== 'all' && (!alert.service || alert.service !== currentFilters.service)) {
+        return false;
+      }
+
+      if (currentFilters.environment !== 'all' && (!alert.environment || alert.environment !== currentFilters.environment)) {
+        return false;
+      }
+
+      if (currentFilters.severity !== 'all' && (!alert.severity || alert.severity !== currentFilters.severity)) {
+        return false;
+      }
+
+      if (currentFilters.status !== 'all' && (!alert.status || alert.status !== currentFilters.status)) {
+        return false;
+      }
+
+      return true;
+    });
+  }, []);
+
+  useEffect(() => {
+    const filtered = applyFilters(allAlerts, filters);
+
+    const sortedAlerts = filtered.sort((a, b) => {
+      const statusPriority = { active: 3, acknowledged: 2, resolved: 1 };
+      const statusDiff = (statusPriority[b.status as keyof typeof statusPriority] || 0) -
+        (statusPriority[a.status as keyof typeof statusPriority] || 0);
+
+      if (statusDiff !== 0) return statusDiff;
+
+      return b.timestamp.getTime() - a.timestamp.getTime();
+    });
+
+    setFilteredAlerts(sortedAlerts);
+
+    setPagination(prev => ({
+      ...prev,
+      total: sortedAlerts.length,
+      totalPages: Math.ceil(sortedAlerts.length / prev.limit),
+      page: 1
+    }));
+  }, [filters, allAlerts, applyFilters]);
+
+  const fetchAlerts = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const alertsData = await api.alerts.getAll();
+
+      if (!alertsData || !Array.isArray(alertsData.data)) {
+        throw new Error('Invalid response format');
+      }
+
+      const formattedAlerts = formatAlerts(alertsData.data);
+
+      const sortedAlerts = formattedAlerts.sort((a, b) => {
+        const statusPriority = { active: 3, acknowledged: 2, resolved: 1 };
+        const statusDiff = (statusPriority[b.status as keyof typeof statusPriority] || 0) -
+          (statusPriority[a.status as keyof typeof statusPriority] || 0);
+
+        if (statusDiff !== 0) return statusDiff;
+
+        return b.timestamp.getTime() - a.timestamp.getTime();
       });
+
+      setAllAlerts(sortedAlerts);
+
+      const uniqueServices = Array.from(new Set(formattedAlerts.map(alert => alert.service))).filter(Boolean);
+      const uniqueEnvironments = Array.from(new Set(formattedAlerts.map(alert => alert.environment))).filter(Boolean);
+
+      setServices(uniqueServices.sort());
+      setEnvironments(uniqueEnvironments.sort());
+
+    } catch (error) {
+      console.error('Error fetching alerts:', error);
+      setError(error instanceof Error ? error.message : 'Failed to fetch alerts');
+      toast.error('Failed to fetch alerts. Please try again.');
     } finally {
       setIsLoading(false);
     }
-  }, [formatAlerts, filters, pagination.page, pagination.limit]);
+  }, [formatAlerts]);
 
-  // Re-fetch when filters change
+  const handleRefreshClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    void fetchAlerts();
+  }, [fetchAlerts]);
+
+  const handleFilterChange = (key: keyof AlertFilters, value: string) => {
+    setFilters(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleFilterClear = useCallback((e: React.MouseEvent<HTMLButtonElement>, key: keyof AlertFilters) => {
+    e.preventDefault();
+    handleFilterChange(key, 'all');
+  }, []);
+
+  const debouncedSearch = useCallback(
+    debounce((value: string) => {
+      setFilters(prev => ({ ...prev, search: value }));
+    }, 300),
+    []
+  );
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const searchTerm = e.target.value;
+    debouncedSearch(searchTerm);
+  };
+
+  const clearSearch = () => {
+    const searchInput = document.querySelector('input[placeholder="Search alerts..."]') as HTMLInputElement;
+    if (searchInput) searchInput.value = '';
+    setFilters(prev => ({ ...prev, search: '' }));
+  };
+
+  const handlePreviousPage = useCallback(() => {
+    if (pagination.page > 1) {
+      setPagination(prev => ({ ...prev, page: prev.page - 1 }));
+    }
+  }, [pagination.page]);
+
+  const handleNextPage = useCallback(() => {
+    if (pagination.page < pagination.totalPages) {
+      setPagination(prev => ({ ...prev, page: prev.page + 1 }));
+    }
+  }, [pagination.page, pagination.totalPages]);
+
   useEffect(() => {
-    // Reset to page 1 when filters change
-    setPagination(prev => ({ ...prev, page: 1 }));
-    fetchAlerts();
-  }, [filters, fetchAlerts]);
+    void fetchAlerts();
+  }, [fetchAlerts]);
 
-  // Auto-refresh setup
   useEffect(() => {
     let intervalId: NodeJS.Timeout;
     if (isAutoRefresh) {
-      intervalId = setInterval(fetchAlerts, 30000); // Refresh every 30 seconds
+      intervalId = setInterval(() => {
+        void fetchAlerts();
+      }, 30000);
     }
-
     return () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
+      if (intervalId) clearInterval(intervalId);
     };
-  }, [fetchAlerts, isAutoRefresh]);
+  }, [isAutoRefresh, fetchAlerts]);
 
-  // Load SMTP configuration
   useEffect(() => {
     async function loadSMTPConfig() {
       try {
@@ -284,22 +362,16 @@ export default function AlertsPage() {
     return <Icon className={`h-4 w-4 ${config.color}`} />;
   };
 
-  // Handle pagination
-  const handlePreviousPage = () => {
-    if (pagination.page > 1) {
-      setPagination(prev => ({ ...prev, page: prev.page - 1 }));
-    }
-  };
+  const startItem = filteredAlerts.length === 0 ? 0 : (pagination.page - 1) * pagination.limit + 1;
+  const endItem = Math.min(pagination.page * pagination.limit, filteredAlerts.length);
 
-  const handleNextPage = () => {
-    if (pagination.page < pagination.totalPages) {
-      setPagination(prev => ({ ...prev, page: prev.page + 1 }));
-    }
-  };
+  const getPaginatedAlerts = useCallback(() => {
+    const start = (pagination.page - 1) * pagination.limit;
+    const end = start + pagination.limit;
+    return filteredAlerts.slice(start, end);
+  }, [filteredAlerts, pagination.page, pagination.limit]);
 
-  // Calculate pagination info
-  const startItem = alerts.length === 0 ? 0 : (pagination.page - 1) * pagination.limit + 1;
-  const endItem = Math.min(startItem + alerts.length - 1, pagination.total);
+  const displayedAlerts = getPaginatedAlerts();
 
   return (
     <MainLayout>
@@ -363,144 +435,156 @@ export default function AlertsPage() {
             <CardDescription>Filter alerts by severity, service, or search by content</CardDescription>
           </CardHeader>
           <CardContent className="pt-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-              <div className="space-y-2">
-                <Label htmlFor="alert-search" className="text-sm font-semibold">Search</Label>
-                <div className="relative">
-                  <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <div className="flex flex-col space-y-4">
+              <div className="flex items-center space-x-2">
+                <div className="relative flex-1">
+                  <div className="absolute left-3 top-2.5 text-muted-foreground">
+                    <Search className="h-4 w-4" />
+                  </div>
                   <Input
-                    id="alert-search"
                     placeholder="Search alerts..."
-                    value={filters.search}
-                    onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-                    className="w-full pl-8 border-input/60 shadow-sm hover:border-input focus:ring-2 focus:ring-primary/30 transition-all"
+                    onChange={handleSearchChange}
+                    className="pl-9 pr-10 transition-all duration-200 focus:ring-2 focus:ring-primary/30"
+                    defaultValue={filters.search}
                   />
                   {filters.search && (
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="absolute right-2 top-0 h-full opacity-70 hover:opacity-100"
-                      onClick={() => setFilters({ ...filters, search: "" })}
+                      className="absolute right-2 top-1.5 h-7 w-7 opacity-70 hover:opacity-100 transition-opacity"
+                      onClick={clearSearch}
                     >
                       <X className="h-4 w-4" />
                     </Button>
                   )}
                 </div>
+                <Select
+                  value={filters.service}
+                  onValueChange={(value) => handleFilterChange('service', value)}
+                >
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Select service" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Services</SelectItem>
+                    {services.map((service) => (
+                      <SelectItem key={service} value={service}>
+                        {service}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={filters.environment}
+                  onValueChange={(value) => handleFilterChange('environment', value)}
+                >
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Select environment" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Environments</SelectItem>
+                    {environments.map((env) => (
+                      <SelectItem key={env} value={env}>
+                        {getEnvironmentLabel(env)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={filters.severity}
+                  onValueChange={(value) => handleFilterChange('severity', value)}
+                >
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Select severity" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Severities</SelectItem>
+                    <SelectItem value="critical">
+                      <div className="flex items-center">
+                        <AlertCircle className="h-4 w-4 mr-2 text-purple-600" />
+                        Critical
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="error">
+                      <div className="flex items-center">
+                        <AlertCircle className="h-4 w-4 mr-2 text-red-500" />
+                        Error
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="warning">
+                      <div className="flex items-center">
+                        <AlertTriangle className="h-4 w-4 mr-2 text-amber-500" />
+                        Warning
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="info">
+                      <div className="flex items-center">
+                        <Info className="h-4 w-4 mr-2 text-blue-500" />
+                        Info
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={filters.status}
+                  onValueChange={(value) => handleFilterChange('status', value)}
+                >
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Statuses</SelectItem>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="acknowledged">Acknowledged</SelectItem>
+                    <SelectItem value="resolved">Resolved</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="service-filter" className="text-sm font-medium">Service</Label>
-                <div className="relative">
-                  <Select
-                    value={filters.service}
-                    onValueChange={(value) => setFilters({ ...filters, service: value })}
+              {/* Active filters display */}
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(filters).map(([key, value]) => {
+                  if (value && value !== 'all') {
+                    return (
+                      <Badge
+                        key={key}
+                        variant="secondary"
+                        className="px-2 py-1 hover:bg-secondary/80"
+                      >
+                        {key}: {value}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-4 w-4 ml-1 hover:bg-transparent"
+                          onClick={() => handleFilterChange(key as keyof AlertFilters, 'all')}
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </Badge>
+                    );
+                  }
+                  return null;
+                })}
+                {Object.values(filters).some(value => value && value !== 'all') && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => {
+                      setFilters({
+                        search: "",
+                        service: "all",
+                        environment: "all",
+                        severity: "all",
+                        status: "all",
+                      });
+                      const searchInput = document.querySelector('input[placeholder="Search alerts..."]') as HTMLInputElement;
+                      if (searchInput) searchInput.value = '';
+                    }}
                   >
-                    <SelectTrigger id="service-filter" className="w-full border-input/60 shadow-sm hover:border-input">
-                      <SelectValue placeholder="All Services" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Services</SelectItem>
-                      {services.map((service) => (
-                        <SelectItem key={service} value={service}>
-                          {service}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {filters.service !== "all" && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="absolute right-8 top-0 h-full opacity-70 hover:opacity-100"
-                      onClick={() => setFilters({ ...filters, service: "all" })}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  )}
-                </div>
+                    Clear all filters
+                  </Button>
+                )}
               </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="environment-filter" className="text-sm font-medium">Environment</Label>
-                <div className="relative">
-                  <Select
-                    value={filters.environment}
-                    onValueChange={(value) => setFilters({ ...filters, environment: value })}
-                  >
-                    <SelectTrigger id="environment-filter" className="w-full border-input/60 shadow-sm hover:border-input">
-                      <SelectValue placeholder="All Environments" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Environments</SelectItem>
-                      {environments.map((env) => (
-                        <SelectItem key={env} value={env}>
-                          {getEnvironmentLabel(env)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {filters.environment !== "all" && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="absolute right-8 top-0 h-full opacity-70 hover:opacity-100"
-                      onClick={() => setFilters({ ...filters, environment: "all" })}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="severity-filter" className="text-sm font-medium">Severity</Label>
-                <div className="relative">
-                  <Select
-                    value={filters.severity}
-                    onValueChange={(value) => setFilters({ ...filters, severity: value })}
-                  >
-                    <SelectTrigger id="severity-filter" className="w-full border-input/60 shadow-sm hover:border-input">
-                      <SelectValue placeholder="All Severities" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Severities</SelectItem>
-                      <SelectItem value="critical">Critical</SelectItem>
-                      <SelectItem value="error">Error</SelectItem>
-                      <SelectItem value="warning">Warning</SelectItem>
-                      <SelectItem value="info">Info</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {filters.severity !== "all" && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="absolute right-8 top-0 h-full opacity-70 hover:opacity-100"
-                      onClick={() => setFilters({ ...filters, severity: "all" })}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end mt-6">
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setFilters({
-                    search: "",
-                    service: "all",
-                    environment: "all",
-                    severity: "all",
-                    status: "all",
-                  });
-                }}
-                className="hover:shadow-md transition-all"
-              >
-                <X className="mr-2 h-4 w-4" />
-                Clear All Filters
-              </Button>
             </div>
           </CardContent>
         </Card>
@@ -515,11 +599,26 @@ export default function AlertsPage() {
           </CardHeader>
           <CardContent className="p-0">
             {isLoading ? (
-              <div className="flex flex-col justify-center items-center py-20">
-                <Loader2 className="h-10 w-10 animate-spin mb-4 text-primary/60" />
-                <p className="text-muted-foreground">Loading alerts...</p>
+              <div className="space-y-4 p-6">
+                {Array.from({ length: 4 }).map((_, index) => (
+                  <div key={index} className="flex items-start space-x-4">
+                    <Skeleton className="h-10 w-10 rounded-full" />
+                    <div className="space-y-2 flex-1">
+                      <div className="flex items-center justify-between">
+                        <Skeleton className="h-5 w-48" />
+                        <Skeleton className="h-5 w-24" />
+                      </div>
+                      <Skeleton className="h-4 w-full" />
+                      <div className="flex gap-2">
+                        <Skeleton className="h-6 w-20" />
+                        <Skeleton className="h-6 w-24" />
+                        <Skeleton className="h-6 w-16" />
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ) : alerts.length === 0 ? (
+            ) : filteredAlerts.length === 0 ? (
               <div className="flex flex-col items-center justify-center p-12 text-center">
                 <div className="rounded-full bg-muted/20 p-4 mb-4">
                   <Slash className="h-8 w-8 text-muted-foreground/70" />
@@ -546,7 +645,7 @@ export default function AlertsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {alerts.map((alert: FormattedAlert, index: number) => (
+                    {displayedAlerts.map((alert: FormattedAlert, index: number) => (
                       <TableRow
                         key={alert.id}
                         className={`group hover:bg-muted/50 transition-colors cursor-pointer animate-in fade-in-50 slide-in-from-left-3 hover:shadow-sm`}
@@ -591,10 +690,9 @@ export default function AlertsPage() {
                   </TableBody>
                 </Table>
 
-                {/* Pagination controls */}
                 <div className="flex justify-between items-center p-4 border-t">
                   <div className="text-sm text-muted-foreground">
-                    Showing <span className="font-medium">{alerts.length === 0 ? 0 : startItem}</span> to <span className="font-medium">{endItem}</span> of <span className="font-medium">{pagination.total}</span> alerts
+                    Showing <span className="font-medium">{filteredAlerts.length === 0 ? 0 : startItem}</span> to <span className="font-medium">{endItem}</span> of <span className="font-medium">{pagination.total}</span> alerts
                   </div>
                   <div className="flex gap-2">
                     <Button
@@ -635,7 +733,6 @@ export default function AlertsPage() {
           </DialogHeader>
 
           <div className="space-y-6 py-4">
-            {/* SMTP Settings Section */}
             <div className="space-y-4">
               <h3 className="text-sm font-medium text-muted-foreground pb-1 border-b">SMTP Settings</h3>
 
@@ -686,7 +783,6 @@ export default function AlertsPage() {
               </div>
             </div>
 
-            {/* Authentication Section */}
             <div className="space-y-4">
               <h3 className="text-sm font-medium text-muted-foreground pb-1 border-b">Authentication</h3>
 
@@ -729,7 +825,6 @@ export default function AlertsPage() {
               </div>
             </div>
 
-            {/* Sender Section */}
             <div className="space-y-4">
               <h3 className="text-sm font-medium text-muted-foreground pb-1 border-b">Sender</h3>
 

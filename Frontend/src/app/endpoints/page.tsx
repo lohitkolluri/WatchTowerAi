@@ -6,7 +6,7 @@ import { formatDate } from "@/lib/utils";
 import { endpointService } from "@/services/endpointService";
 import { AlertTriangle, Check, ExternalLink, Plus, RefreshCw, Search, Trash2, X, Settings, Filter, AlertCircle, Clock as ClockIcon, Lock, Edit, MoreVertical, PlusCircle, Settings2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import {
   Card,
@@ -54,6 +54,8 @@ import { ArrowUpDown } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useEnvironments, normalizeEnvironment, getEnvironmentLabel } from "@/lib/environments";
 import { Label } from "@/components/ui/label";
+import { Slash } from "lucide-react";
+import { debounce } from "lodash";
 
 // Define TypeScript interfaces for better type safety
 interface Endpoint {
@@ -126,6 +128,7 @@ export default function EndpointsPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [filters, setFilters] = useState({
+    search: "",
     environment: "all",
     service: "all",
     status: "all"
@@ -134,8 +137,7 @@ export default function EndpointsPage() {
     allEnvironments,
     customEnvironments,
     addEnvironment,
-    removeEnvironment,
-    setCustomEnvironments
+    removeEnvironment
   } = useEnvironments();
   const [environments, setEnvironments] = useState<string[]>([]);
   const [services, setServices] = useState<string[]>([]);
@@ -161,7 +163,96 @@ export default function EndpointsPage() {
     }
   }, [successMessage]);
 
-  // Keep fetchEndpoints without successMessage dependency
+  // Apply filters to endpoints
+  const applyFilters = useCallback((endpoints: Endpoint[], currentFilters: typeof filters) => {
+    return endpoints.filter(endpoint => {
+      // Search filter - enhanced to search across multiple fields
+      if (currentFilters.search) {
+        const searchLower = currentFilters.search.toLowerCase();
+        const nameMatch = (endpoint.name || '').toLowerCase().includes(searchLower);
+        const urlMatch = (endpoint.url || '').toLowerCase().includes(searchLower);
+        const serviceMatch = (endpoint.service || '').toLowerCase().includes(searchLower);
+        const environmentMatch = (endpoint.environment || '').toLowerCase().includes(searchLower);
+        const statusMatch = (endpoint.status || '').toLowerCase().includes(searchLower);
+
+        if (!nameMatch && !urlMatch && !serviceMatch && !environmentMatch && !statusMatch) {
+          return false;
+        }
+      }
+
+      // Environment filter
+      if (currentFilters.environment !== 'all' && (!endpoint.environment || endpoint.environment !== currentFilters.environment)) {
+        return false;
+      }
+
+      // Service filter
+      if (currentFilters.service !== 'all' && (!endpoint.service || endpoint.service !== currentFilters.service)) {
+        return false;
+      }
+
+      // Status filter
+      if (currentFilters.status !== 'all' && (!endpoint.status || endpoint.status !== currentFilters.status)) {
+        return false;
+      }
+
+      return true;
+    });
+  }, []);
+
+  // Get filtered and sorted endpoints
+  const filteredEndpoints = useMemo(() => {
+    // First apply the filters from the filter state
+    const filtered = applyFilters(endpoints, filters);
+
+    // Then sort the filtered endpoints
+    return [...filtered].sort((a, b) => {
+      const aValue = a[sortConfig.key];
+      const bValue = b[sortConfig.key];
+
+      if (!aValue || !bValue) return 0;
+
+      if (aValue === bValue) return 0;
+
+      const compareResult = aValue < bValue ? -1 : 1;
+      return sortConfig.direction === 'asc' ? compareResult : -compareResult;
+    });
+  }, [endpoints, filters, applyFilters, sortConfig, searchQuery]);
+
+  // Debounced search function
+  const debouncedSearch = useCallback(
+    debounce((value: string) => {
+      setFilters(prev => ({ ...prev, search: value }));
+    }, 300),
+    []
+  );
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const searchTerm = e.target.value;
+    debouncedSearch(searchTerm);
+  };
+
+  const clearSearch = () => {
+    const searchInput = document.querySelector('input[placeholder="Search endpoints..."]') as HTMLInputElement;
+    if (searchInput) searchInput.value = '';
+    setFilters(prev => ({ ...prev, search: '' }));
+  };
+
+  const handleFilterChange = (key: keyof typeof filters, value: string) => {
+    setFilters(prev => ({ ...prev, [key]: value }));
+  };
+
+  const clearFilters = () => {
+    setFilters({
+      search: "",
+      environment: "all",
+      service: "all",
+      status: "all"
+    });
+    const searchInput = document.querySelector('input[placeholder="Search endpoints..."]') as HTMLInputElement;
+    if (searchInput) searchInput.value = '';
+  };
+
+  // Update the fetchEndpoints function to handle client-side filtering
   const fetchEndpoints = useCallback(async (isManualRefresh = false) => {
     try {
       if (isManualRefresh) {
@@ -175,30 +266,38 @@ export default function EndpointsPage() {
 
       // Format endpoint data with normalized environments
       const formattedEndpoints = response
-        .filter(endpoint => endpoint._id) // Filter out endpoints with missing IDs
-        .map((endpoint: any) => ({
-          ...endpoint,
-          id: endpoint._id, // Ensure ID is properly set
-          environment: normalizeEnvironment(endpoint.environment),
+        .filter(endpoint => endpoint._id)
+        .map((endpoint: EndpointData) => ({
+          id: endpoint._id,
+          name: endpoint.name,
+          url: endpoint.url,
+          service: endpoint.service || '',
+          environment: normalizeEnvironment(endpoint.environment || ''),
           status: endpoint.status || "active",
           lastChecked: endpoint.last_checked
             ? new Date(endpoint.last_checked)
-            : new Date() // Use current date as fallback if last_checked is not available
+            : new Date()
         }));
 
-      setEndpoints(formattedEndpoints);
+      // Sort endpoints by name initially
+      const sortedEndpoints = formattedEndpoints.sort((a, b) =>
+        a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+      );
 
-      // Extract unique environments and services from endpoints
-      const uniqueEnvironments = [...new Set(formattedEndpoints.map(e => e.environment))]
+      setEndpoints(sortedEndpoints);
+
+      // Extract unique environments and services
+      const uniqueEnvironments = Array.from(new Set(formattedEndpoints.map(e => e.environment)))
         .filter(Boolean)
         .sort();
 
-      const uniqueServices = [...new Set(formattedEndpoints.map(e => e.service))]
+      const uniqueServices = Array.from(new Set(formattedEndpoints.map(e => e.service)))
         .filter(Boolean)
         .sort();
 
       setEnvironments(uniqueEnvironments);
       setServices(uniqueServices);
+
     } catch (error) {
       console.error("Error fetching endpoints:", error);
       setError("Failed to fetch endpoints. Please try again later.");
@@ -206,7 +305,7 @@ export default function EndpointsPage() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, []); // No dependency on successMessage
+  }, []);
 
   // Ping a single endpoint
   const pingEndpoint = async (id: string, url: string) => {
@@ -372,7 +471,7 @@ export default function EndpointsPage() {
     // Only fetch when filters or search actually change, not on initial render
     if (isLoading) return;
     fetchEndpoints();
-  }, [filters, searchQuery, fetchEndpoints]);
+  }, [filters, fetchEndpoints]);
 
   // Initial fetch of endpoints
   useEffect(() => {
@@ -469,143 +568,6 @@ export default function EndpointsPage() {
     }
   };
 
-  // Handle search input change
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchQuery(e.target.value);
-  };
-
-  // Function to get status indicator
-  const getStatusIndicator = (status: string) => {
-    const isActive = status.toLowerCase() === "active";
-    return (
-      <div className="flex items-center gap-2">
-        <div className={`h-3 w-3 rounded-full ${isActive ? "bg-green-500" : "bg-red-500"}`}></div>
-        <span className={isActive ? "text-green-500" : "text-red-500"}>
-          {isActive ? "Active" : "Inactive"}
-        </span>
-      </div>
-    );
-  };
-
-  // Function to get status icon based on status
-  const getStatusIcon = (status: string) => {
-    switch (status.toLowerCase()) {
-      case "active":
-        return <Check className="h-4 w-4 text-green-500" />;
-      case "warning":
-        return <AlertTriangle className="h-4 w-4 text-yellow-500" />;
-      case "error":
-        return <X className="h-4 w-4 text-destructive" />;
-      default:
-        return <Check className="h-4 w-4 text-green-500" />;
-    }
-  };
-
-  // Handle deleting an endpoint
-  const handleDeleteEndpoint = async (endpoint: Endpoint) => {
-    setEndpointToDelete(endpoint);
-    setDeleteError(null);
-  };
-
-  // Enhanced delete confirmation
-  const confirmDeleteEndpoint = async () => {
-    if (!endpointToDelete) return;
-
-    setIsDeleting(true);
-    setDeleteError(null);
-
-    try {
-      await endpointService.deleteEndpoint(endpointToDelete.id);
-
-      // Stop monitoring if active
-      stopMonitoring(endpointToDelete.id);
-
-      // Remove from state
-      setEndpoints(prev => prev.filter(e => e.id !== endpointToDelete.id));
-
-      setEndpointToDelete(null);
-      toast.success("Endpoint deleted successfully");
-    } catch (err) {
-      console.error("Error deleting endpoint:", err);
-      toast.error("Failed to delete endpoint");
-    } finally {
-      setIsDeleting(false);
-    }
-  };
-
-  // Function to handle editing an endpoint
-  const handleEditEndpoint = (endpoint: Endpoint) => {
-    setSelectedEndpoint(endpoint);
-    setIsEditMode(true);
-    setShowRegisterModal(true);
-  };
-
-  // Function to handle endpoint submission - both create and update
-  const handleEndpointSubmit = async (formData: Record<string, any>): Promise<void> => {
-    try {
-      if (isEditMode && selectedEndpoint) {
-        // Handle update
-        // Format data for update
-        const updateData = {
-          name: formData.name,
-          url: formData.url,
-          method: formData.method,
-          service: formData.service,
-          environment: formData.environment,
-          description: formData.description
-        };
-
-        // Call API to update endpoint
-        const result = await endpointService.updateEndpoint(selectedEndpoint.id, updateData);
-
-        if (result) {
-          const newEndpoint = result.endpoint;
-          toast.success("Endpoint updated successfully");
-
-          // Instead of calling fetchEndpoints, update the state directly
-          setEndpoints(prevEndpoints => {
-            const updatedEndpoints = prevEndpoints.map(ep => {
-              if (ep.id === selectedEndpoint.id) {
-                return {
-                  ...ep,
-                  name: formData.name,
-                  url: formData.url,
-                  service: formData.service,
-                  environment: normalizeEnvironment(formData.environment),
-                  status: ep.status
-                };
-              }
-              return ep;
-            });
-            return updatedEndpoints;
-          });
-
-          setIsEditMode(false);
-          setSelectedEndpoint(null);
-          setShowRegisterModal(false);
-
-          // Start monitoring automatically if enabled
-          if (newEndpoint && newEndpoint._id && monitoringState[newEndpoint._id]?.isActive) {
-            // Ping this endpoint immediately
-            try {
-              await endpointService.pingEndpoint(newEndpoint._id);
-            } catch (error) {
-              console.error("Error pinging endpoint:", error);
-            }
-          }
-        }
-      } else {
-        // Handle create new
-        await handleRegisterEndpoint(formData);
-        setShowRegisterModal(false);
-      }
-    } catch (error) {
-      console.error("Error submitting endpoint:", error);
-      const errorMessage = error instanceof Error ? error.message : "An error occurred submitting the endpoint";
-      toast.error(errorMessage);
-    }
-  };
-
   // Function to handle sorting
   const handleSort = (key: keyof Endpoint) => {
     setSortConfig(current => ({
@@ -613,43 +575,6 @@ export default function EndpointsPage() {
       direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc'
     }));
   };
-
-  // Sort endpoints based on current configuration
-  const sortedEndpoints = [...endpoints].sort((a, b) => {
-    const aValue = String(a[sortConfig.key] || '');
-    const bValue = String(b[sortConfig.key] || '');
-
-    return sortConfig.direction === 'asc'
-      ? aValue.localeCompare(bValue)
-      : bValue.localeCompare(aValue);
-  });
-
-  // Apply filters to the sorted endpoints
-  const filteredEndpoints = sortedEndpoints.filter(endpoint => {
-    // Filter by search query
-    const matchesSearch = searchQuery
-      ? endpoint.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      endpoint.url.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (endpoint.service && endpoint.service.toLowerCase().includes(searchQuery.toLowerCase()))
-      : true;
-
-    // Filter by environment
-    const matchesEnvironment = filters.environment === "all"
-      ? true
-      : endpoint.environment === filters.environment;
-
-    // Filter by service
-    const matchesService = filters.service === "all"
-      ? true
-      : endpoint.service === filters.service;
-
-    // Filter by status
-    const matchesStatus = filters.status === "all"
-      ? true
-      : endpoint.status === filters.status;
-
-    return matchesSearch && matchesEnvironment && matchesService && matchesStatus;
-  });
 
   // Update handleAddEnvironment to use our hook function
   const handleAddEnvironment = () => {
@@ -670,7 +595,7 @@ export default function EndpointsPage() {
       return;
     }
 
-    setCustomEnvironments([...customEnvironments, cleanedEnv]);
+    addEnvironment(cleanedEnv);
     setNewlyAddedEnvs([...newlyAddedEnvs, cleanedEnv]);
     setNewEnvironment('');
     setDuplicateError('');
@@ -678,7 +603,7 @@ export default function EndpointsPage() {
 
   // Update handleRemoveEnvironment to use our hook function
   const handleRemoveEnvironment = (env: string) => {
-    setCustomEnvironments(customEnvironments.filter(e => e !== env));
+    removeEnvironment(env);
     setNewlyAddedEnvs(newlyAddedEnvs.filter(e => e !== env));
   };
 
@@ -828,6 +753,125 @@ export default function EndpointsPage() {
     </DialogContent>
   );
 
+  // Function to get status icon based on status
+  const getStatusIcon = (status: string) => {
+    switch (status.toLowerCase()) {
+      case "active":
+        return <Check className="h-4 w-4 text-green-500" />;
+      case "warning":
+        return <AlertTriangle className="h-4 w-4 text-yellow-500" />;
+      case "error":
+        return <X className="h-4 w-4 text-destructive" />;
+      default:
+        return <Check className="h-4 w-4 text-green-500" />;
+    }
+  };
+
+  // Handle deleting an endpoint
+  const handleDeleteEndpoint = async (endpoint: Endpoint) => {
+    setEndpointToDelete(endpoint);
+    setDeleteError(null);
+  };
+
+  // Enhanced delete confirmation
+  const confirmDeleteEndpoint = async () => {
+    if (!endpointToDelete) return;
+
+    setIsDeleting(true);
+    setDeleteError(null);
+
+    try {
+      await endpointService.deleteEndpoint(endpointToDelete.id);
+
+      // Stop monitoring if active
+      stopMonitoring(endpointToDelete.id);
+
+      // Remove from state
+      setEndpoints(prev => prev.filter(e => e.id !== endpointToDelete.id));
+
+      setEndpointToDelete(null);
+      toast.success("Endpoint deleted successfully");
+    } catch (err) {
+      console.error("Error deleting endpoint:", err);
+      toast.error("Failed to delete endpoint");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  // Function to handle editing an endpoint
+  const handleEditEndpoint = (endpoint: Endpoint) => {
+    setSelectedEndpoint(endpoint);
+    setIsEditMode(true);
+    setShowRegisterModal(true);
+  };
+
+  // Function to handle endpoint submission - both create and update
+  const handleEndpointSubmit = async (formData: Record<string, any>): Promise<void> => {
+    try {
+      if (isEditMode && selectedEndpoint) {
+        // Handle update
+        // Format data for update
+        const updateData = {
+          name: formData.name,
+          url: formData.url,
+          method: formData.method,
+          service: formData.service,
+          environment: formData.environment,
+          description: formData.description
+        };
+
+        // Call API to update endpoint
+        const result = await endpointService.updateEndpoint(selectedEndpoint.id, updateData);
+
+        if (result) {
+          const newEndpoint = result.endpoint;
+          toast.success("Endpoint updated successfully");
+
+          // Instead of calling fetchEndpoints, update the state directly
+          setEndpoints(prevEndpoints => {
+            const updatedEndpoints = prevEndpoints.map(ep => {
+              if (ep.id === selectedEndpoint.id) {
+                return {
+                  ...ep,
+                  name: formData.name,
+                  url: formData.url,
+                  service: formData.service,
+                  environment: normalizeEnvironment(formData.environment),
+                  status: ep.status
+                };
+              }
+              return ep;
+            });
+            return updatedEndpoints;
+          });
+
+          setIsEditMode(false);
+          setSelectedEndpoint(null);
+          setShowRegisterModal(false);
+
+          // Start monitoring automatically if enabled
+          if (newEndpoint && newEndpoint._id && monitoringState[newEndpoint._id]?.isActive) {
+            // Ping this endpoint immediately
+            try {
+              await endpointService.pingEndpoint(newEndpoint._id);
+            } catch (error) {
+              console.error("Error pinging endpoint:", error);
+            }
+          }
+        }
+      } else {
+        // Handle create new
+        await handleRegisterEndpoint(formData);
+        setShowRegisterModal(false);
+      }
+    } catch (error) {
+      console.error("Error submitting endpoint:", error);
+      const errorMessage = error instanceof Error ? error.message : "An error occurred submitting the endpoint";
+      toast.error(errorMessage);
+    }
+  };
+
   return (
     <MainLayout>
       <div className="space-y-6">
@@ -850,217 +894,267 @@ export default function EndpointsPage() {
           </div>
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Filters</CardTitle>
-            <CardDescription>Filter endpoints by environment, service, or status</CardDescription>
+        <Card className="shadow-md hover:shadow-lg transition-all duration-300 border border-border/60">
+          <CardHeader className="bg-muted/30 rounded-t-lg pb-2">
+            <CardTitle className="flex items-center gap-2 text-xl">
+              <Filter className="h-5 w-5 text-primary" />
+              Filters
+            </CardTitle>
+            <CardDescription>Filter endpoints by service, environment, or search by content</CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="flex flex-col md:flex-row gap-4">
-              <div className="flex-1">
+          <CardContent className="pt-6">
+            <div className="flex flex-col space-y-4">
+              <div className="flex items-center space-x-2">
+                <div className="relative flex-1">
+                  <div className="absolute left-3 top-2.5 text-muted-foreground">
+                    <Search className="h-4 w-4" />
+                  </div>
+                  <Input
+                    placeholder="Search endpoints..."
+                    onChange={handleSearchChange}
+                    className="pl-9 pr-10 transition-all duration-200 focus:ring-2 focus:ring-primary/30"
+                    defaultValue={filters.search}
+                  />
+                  {filters.search && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="absolute right-2 top-1.5 h-7 w-7 opacity-70 hover:opacity-100 transition-opacity"
+                      onClick={clearSearch}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
                 <Select
-                  value={filters.environment}
-                  onValueChange={(value) => setFilters({ ...filters, environment: value })}
+                  value={filters.service}
+                  onValueChange={(value) => handleFilterChange('service', value)}
                 >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="All Environments" />
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Select service" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem key="all-environments" value="all">All Environments</SelectItem>
-                    {environments.map(env => (
-                      <SelectItem key={`env-${env}`} value={env}>
+                    <SelectItem value="all">All Services</SelectItem>
+                    {services.map((service) => (
+                      <SelectItem key={service} value={service}>
+                        {service}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={filters.environment}
+                  onValueChange={(value) => handleFilterChange('environment', value)}
+                >
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Select environment" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Environments</SelectItem>
+                    {environments.map((env) => (
+                      <SelectItem key={env} value={env}>
                         {getEnvironmentLabel(env)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
-              <div className="flex-1">
-                <Select
-                  value={filters.service}
-                  onValueChange={(value) => setFilters(prev => ({ ...prev, service: value }))}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Service" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem key="all-services" value="all">All Services</SelectItem>
-                    {services.map(service => (
-                      <SelectItem key={`service-${service}`} value={service}>{service}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex-1">
                 <Select
                   value={filters.status}
-                  onValueChange={(value) => setFilters(prev => ({ ...prev, status: value }))}
+                  onValueChange={(value) => handleFilterChange('status', value)}
                 >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Status" />
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Select status" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem key="all-statuses" value="all">All Statuses</SelectItem>
-                    <SelectItem key="active-status" value="active">Active</SelectItem>
-                    <SelectItem key="inactive-status" value="inactive">Inactive</SelectItem>
-                    <SelectItem key="warning-status" value="warning">Warning</SelectItem>
-                    <SelectItem key="error-status" value="error">Error</SelectItem>
+                    <SelectItem value="all">All Statuses</SelectItem>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="inactive">Inactive</SelectItem>
+                    <SelectItem value="error">Error</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex-1">
-                <Input
-                  placeholder="Search endpoints..."
-                  value={searchQuery}
-                  onChange={handleSearchChange}
-                  className="w-full"
-                />
+
+              {/* Active filters display */}
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(filters).map(([key, value]) => {
+                  if (value && value !== 'all') {
+                    return (
+                      <Badge
+                        key={key}
+                        variant="secondary"
+                        className="px-2 py-1 hover:bg-secondary/80"
+                      >
+                        {key}: {value}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-4 w-4 ml-1 hover:bg-transparent"
+                          onClick={() => handleFilterChange(key as keyof typeof filters, 'all')}
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </Badge>
+                    );
+                  }
+                  return null;
+                })}
+                {Object.values(filters).some(value => value && value !== 'all') && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={clearFilters}
+                  >
+                    Clear all filters
+                  </Button>
+                )}
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[100px]">Status</TableHead>
-                <TableHead onClick={() => handleSort('name')} className="cursor-pointer">
-                  Name {sortConfig.key === 'name' && (
-                    <ArrowUpDown className="ml-2 h-4 w-4 inline" />
-                  )}
-                </TableHead>
-                <TableHead onClick={() => handleSort('service')} className="cursor-pointer">
-                  Service {sortConfig.key === 'service' && (
-                    <ArrowUpDown className="ml-2 h-4 w-4 inline" />
-                  )}
-                </TableHead>
-                <TableHead onClick={() => handleSort('environment')} className="cursor-pointer">
-                  Environment {sortConfig.key === 'environment' && (
-                    <ArrowUpDown className="ml-2 h-4 w-4 inline" />
-                  )}
-                </TableHead>
-                <TableHead>URL</TableHead>
-                <TableHead onClick={() => handleSort('lastChecked')} className="cursor-pointer">
-                  Last Checked {sortConfig.key === 'lastChecked' && (
-                    <ArrowUpDown className="ml-2 h-4 w-4 inline" />
-                  )}
-                </TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isLoading ? (
-                <TableRow key="loading-row">
-                  <TableCell colSpan={7} className="text-center py-8">
-                    <div className="flex justify-center items-center gap-2">
-                      <RefreshCw className="h-4 w-4 animate-spin" />
-                      Loading endpoints...
+        <Card className="shadow-md hover:shadow-lg transition-all duration-300 border border-border/60">
+          <CardContent className="p-0">
+            {isLoading ? (
+              <div className="space-y-4 p-6">
+                {Array.from({ length: 4 }).map((_, index) => (
+                  <div key={index} className="flex items-start space-x-4">
+                    <Skeleton className="h-10 w-10 rounded-full" />
+                    <div className="space-y-2 flex-1">
+                      <Skeleton className="h-5 w-48" />
+                      <Skeleton className="h-4 w-full" />
                     </div>
-                  </TableCell>
-                </TableRow>
-              ) : filteredEndpoints.length === 0 ? (
-                <TableRow key="empty-row">
-                  <TableCell colSpan={7} className="text-center py-8">
-                    <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                      <ExternalLink className="h-8 w-8" />
-                      <p>No endpoints found</p>
-                      {!error && (
-                        <Button
-                          onClick={() => setShowRegisterModal(true)}
-                          className="mt-4"
-                        >
-                          <Plus className="mr-2 h-4 w-4" />
-                          Add Endpoint
-                        </Button>
+                  </div>
+                ))}
+              </div>
+            ) : filteredEndpoints.length === 0 ? (
+              <div className="flex flex-col items-center justify-center p-12 text-center">
+                <div className="rounded-full bg-muted/20 p-4 mb-4">
+                  <Slash className="h-8 w-8 text-muted-foreground/70" />
+                </div>
+                <h3 className="text-lg font-medium">No endpoints found</h3>
+                <p className="text-muted-foreground mt-1 mb-4">
+                  Try changing your filters or add a new endpoint
+                </p>
+                <Button variant="outline" onClick={() => setShowRegisterModal(true)}>
+                  <PlusCircle className="mr-2 h-4 w-4" />
+                  Add Endpoint
+                </Button>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[100px]">Status</TableHead>
+                    <TableHead onClick={() => handleSort('name')} className="cursor-pointer">
+                      Name {sortConfig.key === 'name' && (
+                        <ArrowUpDown className="ml-2 h-4 w-4 inline" />
                       )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                filteredEndpoints.map((endpoint) => (
-                  <TableRow key={endpoint.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        {getStatusIcon(endpoint.status)}
-                        <Badge variant={endpoint.status === "active" ? "secondary" : "destructive"}>
-                          {endpoint.status}
-                        </Badge>
-                      </div>
-                    </TableCell>
-                    <TableCell>{endpoint.name}</TableCell>
-                    <TableCell>{endpoint.service}</TableCell>
-                    <TableCell>{endpoint.environment}</TableCell>
-                    <TableCell>
-                      <a
-                        href={endpoint.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-2 hover:underline text-sm text-muted-foreground"
-                      >
-                        <ExternalLink className="h-4 w-4" />
-                        {endpoint.url}
-                      </a>
-                    </TableCell>
-                    <TableCell>
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger>
-                            {endpoint.lastChecked ? (
-                              <time dateTime={endpoint.lastChecked.toISOString()} className="text-sm text-muted-foreground">
-                                {formatDate(endpoint.lastChecked)}
-                              </time>
-                            ) : (
-                              <span className="text-sm text-muted-foreground">Not checked yet</span>
-                            )}
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>{endpoint.lastChecked ? endpoint.lastChecked.toLocaleString() : 'Not checked yet'}</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => {
-                            if (endpoint.id) {
-                              toggleMonitoring(endpoint.id, endpoint.url);
-                            } else {
-                              toast.error("Cannot monitor: Endpoint ID is missing");
-                            }
-                          }}
-                        >
-                          <RefreshCw
-                            className={`h-4 w-4 ${monitoringState[endpoint.id]?.isActive
-                              ? "text-green-500 animate-spin"
-                              : "text-muted-foreground"
-                              }`}
-                          />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleEditEndpoint(endpoint)}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleDeleteEndpoint(endpoint)}
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </div>
-                    </TableCell>
+                    </TableHead>
+                    <TableHead onClick={() => handleSort('service')} className="cursor-pointer">
+                      Service {sortConfig.key === 'service' && (
+                        <ArrowUpDown className="ml-2 h-4 w-4 inline" />
+                      )}
+                    </TableHead>
+                    <TableHead onClick={() => handleSort('environment')} className="cursor-pointer">
+                      Environment {sortConfig.key === 'environment' && (
+                        <ArrowUpDown className="ml-2 h-4 w-4 inline" />
+                      )}
+                    </TableHead>
+                    <TableHead>URL</TableHead>
+                    <TableHead onClick={() => handleSort('lastChecked')} className="cursor-pointer">
+                      Last Checked {sortConfig.key === 'lastChecked' && (
+                        <ArrowUpDown className="ml-2 h-4 w-4 inline" />
+                      )}
+                    </TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+                </TableHeader>
+                <TableBody>
+                  {filteredEndpoints.map((endpoint) => (
+                    <TableRow key={endpoint.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          {getStatusIcon(endpoint.status)}
+                          <Badge variant={endpoint.status === "active" ? "secondary" : "destructive"}>
+                            {endpoint.status}
+                          </Badge>
+                        </div>
+                      </TableCell>
+                      <TableCell>{endpoint.name}</TableCell>
+                      <TableCell>{endpoint.service}</TableCell>
+                      <TableCell>{endpoint.environment}</TableCell>
+                      <TableCell>
+                        <a
+                          href={endpoint.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 hover:underline text-sm text-muted-foreground"
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                          {endpoint.url}
+                        </a>
+                      </TableCell>
+                      <TableCell>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger>
+                              {endpoint.lastChecked ? (
+                                <time dateTime={endpoint.lastChecked.toISOString()} className="text-sm text-muted-foreground">
+                                  {formatDate(endpoint.lastChecked)}
+                                </time>
+                              ) : (
+                                <span className="text-sm text-muted-foreground">Not checked yet</span>
+                              )}
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>{endpoint.lastChecked ? endpoint.lastChecked.toLocaleString() : 'Not checked yet'}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              if (endpoint.id) {
+                                toggleMonitoring(endpoint.id, endpoint.url);
+                              } else {
+                                toast.error("Cannot monitor: Endpoint ID is missing");
+                              }
+                            }}
+                          >
+                            <RefreshCw
+                              className={`h-4 w-4 ${monitoringState[endpoint.id]?.isActive
+                                ? "text-green-500 animate-spin"
+                                : "text-muted-foreground"
+                                }`}
+                            />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleEditEndpoint(endpoint)}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleDeleteEndpoint(endpoint)}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
         </Card>
       </div>
 

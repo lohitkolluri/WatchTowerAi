@@ -49,6 +49,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import debounce from 'lodash/debounce';
+import { Skeleton } from '@/components/ui/skeleton';
 
 // Dynamically import components that might cause SSR issues
 const Calendar = dynamic<React.ComponentProps<typeof CalendarType>>(() => import('@/components/ui/calendar').then(mod => mod.Calendar), {
@@ -104,7 +105,8 @@ export default function LogsPage() {
   const { toast } = useToast();
   const searchParams = useSearchParams();
 
-  const [logs, setLogs] = useState<Log[]>([]);
+  const [allLogs, setAllLogs] = useState<Log[]>([]);
+  const [filteredLogs, setFilteredLogs] = useState<Log[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
@@ -113,78 +115,210 @@ export default function LogsPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [filtersVisible, setFiltersVisible] = useState(true);
   const [filters, setFilters] = useState({
-    page: 1,
-    limit: 50,
-    service: '',
-    level: '',
-    startDate: '',
-    endDate: '',
-    search: '',
+    page: parseInt(searchParams.get('page') || '1'),
+    limit: parseInt(searchParams.get('limit') || '50'),
+    service: searchParams.get('service') || '',
+    level: searchParams.get('level') || '',
+    startDate: searchParams.get('startDate') || '',
+    endDate: searchParams.get('endDate') || '',
+    search: searchParams.get('search') || '',
   });
 
-  // Debounced search function
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Function to apply filters to logs
+  const applyFilters = useCallback((logs: Log[], currentFilters: typeof filters) => {
+    return logs.filter(log => {
+      // Search filter
+      if (currentFilters.search) {
+        const searchLower = currentFilters.search.toLowerCase();
+        const messageMatch = (log.message || '').toLowerCase().includes(searchLower);
+        const serviceMatch = (log.service || '').toLowerCase().includes(searchLower);
+        const levelMatch = (log.level || '').toLowerCase().includes(searchLower);
+        const endpointMatch = (log.endpoint || '').toLowerCase().includes(searchLower);
+        if (!messageMatch && !serviceMatch && !levelMatch && !endpointMatch) {
+          return false;
+        }
+      }
+
+      // Service filter
+      if (currentFilters.service && (!log.service || log.service !== currentFilters.service)) {
+        return false;
+      }
+
+      // Level filter
+      if (currentFilters.level && (!log.level || log.level.toLowerCase() !== currentFilters.level.toLowerCase())) {
+        return false;
+      }
+
+      // Date filter
+      if (currentFilters.startDate && log.timestamp) {
+        const startDate = new Date(currentFilters.startDate);
+        startDate.setHours(0, 0, 0, 0); // Set to start of day
+        const logDate = new Date(log.timestamp);
+        if (logDate < startDate) {
+          return false;
+        }
+      }
+
+      if (currentFilters.endDate && log.timestamp) {
+        const endDate = new Date(currentFilters.endDate);
+        endDate.setHours(23, 59, 59, 999); // Set to end of day
+        const logDate = new Date(log.timestamp);
+        if (logDate > endDate) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, []);
+
+  // Effect to handle filtering
+  useEffect(() => {
+    const filtered = applyFilters(allLogs, filters);
+    setFilteredLogs(filtered);
+    setTotal(filtered.length);
+
+    // Update URL with current filters
+    const url = new URL(window.location.href);
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value) {
+        url.searchParams.set(key, value.toString());
+      } else {
+        url.searchParams.delete(key);
+      }
+    });
+    window.history.pushState({}, '', url.toString());
+  }, [filters, allLogs, applyFilters]);
+
+  // Debounced search function with proper cleanup
   const debouncedSearch = useCallback(
     debounce((searchTerm: string) => {
       setFilters(prev => ({ ...prev, search: searchTerm, page: 1 }));
-    }, 500),
+      setSearching(false);
+    }, 300),
     []
   );
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    // Update the input value immediately for visual feedback
-    // but debounce the actual filter update
     const searchTerm = e.target.value;
+    setSearching(true);
     debouncedSearch(searchTerm);
   };
 
   const clearSearch = () => {
-    // Clear the input visually and update the state
     const searchInput = document.querySelector('input[placeholder="Search logs..."]') as HTMLInputElement;
     if (searchInput) searchInput.value = '';
     setFilters(prev => ({ ...prev, search: '', page: 1 }));
   };
 
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     try {
       setLoading(true);
-      console.log('Fetching logs with filters:', filters);
-      const response = await logsService.getLogs(filters);
+      const response = await logsService.getLogs();
 
-      // Make sure we have valid arrays and values
-      const logsList = response?.logs || [];
-      const totalCount = response?.total || 0;
+      if (!response || !Array.isArray(response.logs)) {
+        throw new Error('Invalid response format');
+      }
 
-      setLogs(logsList);
-      setTotal(totalCount);
+      // Sort logs by timestamp in descending order (newest first)
+      const sortedLogs = response.logs.sort((a, b) =>
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
+
+      setAllLogs(sortedLogs);
     } catch (error) {
       console.error('Error fetching logs:', error);
       toast({
         title: 'Error',
-        description: 'Failed to fetch logs. Please try again.',
+        description: error instanceof Error ? error.message : 'Failed to fetch logs. Please try again.',
         variant: 'destructive',
       });
-      // Set safe defaults
-      setLogs([]);
+      setAllLogs([]);
       setTotal(0);
     } finally {
       setLoading(false);
       setSearching(false);
     }
-  };
+  }, [toast]);
 
-  const handleSearch = async () => {
-    setSearching(true);
-    await fetchLogs();
-  };
+  // Get paginated logs
+  const getPaginatedLogs = useCallback(() => {
+    const start = (filters.page - 1) * filters.limit;
+    const end = start + filters.limit;
+    return filteredLogs.slice(start, end);
+  }, [filteredLogs, filters.page, filters.limit]);
 
-  const fetchServices = async () => {
-    try {
-      const servicesList = await logsService.getServicesList();
-      setServices(Array.isArray(servicesList) ? servicesList : []);
-    } catch (error) {
-      console.error('Error fetching services:', error);
+  // Effect to fetch logs initially and set up services
+  useEffect(() => {
+    void fetchLogs();
+  }, [fetchLogs]);
+
+  const fetchServices = useCallback(() => {
+    // Get unique services from allLogs
+    const uniqueServices = Array.from(new Set(allLogs.map(log => log.service))).filter(Boolean);
+    setServices(uniqueServices.sort());
+  }, [allLogs]);
+
+  // Effect to update services when logs change
+  useEffect(() => {
+    fetchServices();
+  }, [allLogs, fetchServices]);
+
+  // Update filters when URL params change
+  useEffect(() => {
+    const newFilters = {
+      page: parseInt(searchParams.get('page') || '1'),
+      limit: parseInt(searchParams.get('limit') || '50'),
+      service: searchParams.get('service') || '',
+      level: searchParams.get('level') || '',
+      startDate: searchParams.get('startDate') || '',
+      endDate: searchParams.get('endDate') || '',
+      search: searchParams.get('search') || '',
+    };
+
+    // Only update if filters have actually changed
+    if (JSON.stringify(newFilters) !== JSON.stringify(filters)) {
+      setFilters(newFilters);
     }
+  }, [searchParams]);
+
+  const handleSearch = () => {
+    setSearching(true);
+    const searchInput = document.querySelector('input[placeholder="Search logs..."]') as HTMLInputElement;
+    if (searchInput) {
+      debouncedSearch(searchInput.value);
+    }
+    setSearching(false);
+  };
+
+  // Handle date selection
+  const handleDateSelect = (date: Date | undefined, type: 'start' | 'end') => {
+    if (date) {
+      const dateStr = date.toISOString().split('T')[0]; // Get YYYY-MM-DD format
+      setFilters(prev => ({
+        ...prev,
+        [type === 'start' ? 'startDate' : 'endDate']: dateStr,
+        page: 1
+      }));
+    }
+  };
+
+  // Handle service selection
+  const handleServiceSelect = (value: string) => {
+    setFilters(prev => ({
+      ...prev,
+      service: value === 'all' ? '' : value,
+      page: 1
+    }));
+  };
+
+  // Handle level selection
+  const handleLevelSelect = (value: string) => {
+    setFilters(prev => ({
+      ...prev,
+      level: value === 'all' ? '' : value,
+      page: 1
+    }));
   };
 
   const handleClearLogs = async () => {
@@ -209,7 +343,7 @@ export default function LogsPage() {
   const handleExportLogs = () => {
     try {
       // Generate a JSON string containing the logs
-      const jsonData = JSON.stringify(logs, null, 2);
+      const jsonData = JSON.stringify(getPaginatedLogs(), null, 2);
 
       // Create a blob from the JSON string
       const blob = new Blob([jsonData], { type: 'application/json' });
@@ -246,10 +380,6 @@ export default function LogsPage() {
   useEffect(() => {
     fetchServices();
   }, []);
-
-  useEffect(() => {
-    fetchLogs();
-  }, [filters]);
 
   const getLevelBadge = (level: string) => {
     switch (level.toLowerCase()) {
@@ -336,7 +466,7 @@ export default function LogsPage() {
                   <Button
                     variant="outline"
                     onClick={handleExportLogs}
-                    disabled={loading || logs.length === 0}
+                    disabled={loading || filteredLogs.length === 0}
                     size="icon"
                     className="size-9 hover:shadow-md transition-all duration-200 hover:border-primary/40"
                   >
@@ -353,7 +483,7 @@ export default function LogsPage() {
                   <Button
                     variant="outline"
                     onClick={handleClearLogs}
-                    disabled={loading || logs.length === 0}
+                    disabled={loading || filteredLogs.length === 0}
                     size="icon"
                     className="size-9 hover:shadow-md transition-all duration-200 hover:border-destructive/40"
                   >
@@ -434,7 +564,7 @@ export default function LogsPage() {
                 <div>
                   <Select
                     value={filters.service}
-                    onValueChange={(value) => setFilters(prev => ({ ...prev, service: value === 'all' ? '' : value, page: 1 }))}
+                    onValueChange={handleServiceSelect}
                   >
                     <SelectTrigger>
                       <div className="flex items-center">
@@ -455,7 +585,7 @@ export default function LogsPage() {
                 <div>
                   <Select
                     value={filters.level}
-                    onValueChange={(value) => setFilters(prev => ({ ...prev, level: value === 'all' ? '' : value, page: 1 }))}
+                    onValueChange={handleLevelSelect}
                   >
                     <SelectTrigger>
                       <div className="flex items-center">
@@ -498,11 +628,7 @@ export default function LogsPage() {
                       <Calendar
                         mode="single"
                         selected={filters.startDate ? new Date(filters.startDate) : undefined}
-                        onSelect={(date) => setFilters(prev => ({
-                          ...prev,
-                          startDate: date ? date.toISOString() : '',
-                          page: 1
-                        }))}
+                        onSelect={(date) => handleDateSelect(date, 'start')}
                         initialFocus
                       />
                     </PopoverContent>
@@ -515,13 +641,27 @@ export default function LogsPage() {
 
         <Card className="shadow-md hover:shadow-lg transition-all duration-300 border border-border/50 animate-in fade-in-50 duration-300">
           {loading ? (
-            <div className="flex flex-col justify-center items-center py-20">
-              <Loader2 className="h-10 w-10 animate-spin mb-4 text-primary/60" />
-              <p className="text-muted-foreground">Loading logs...</p>
+            <div className="space-y-4 p-6">
+              {Array.from({ length: 5 }).map((_, index) => (
+                <div key={index} className="flex items-start space-x-4">
+                  <Skeleton className="h-12 w-12 rounded-full" />
+                  <div className="space-y-2 flex-1">
+                    <div className="flex items-center justify-between">
+                      <Skeleton className="h-5 w-32" />
+                      <Skeleton className="h-5 w-24" />
+                    </div>
+                    <Skeleton className="h-4 w-full" />
+                    <div className="flex gap-2">
+                      <Skeleton className="h-6 w-16" />
+                      <Skeleton className="h-6 w-20" />
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           ) : (
             <>
-              {logs.length === 0 ? (
+              {filteredLogs.length === 0 ? (
                 <div className="text-center py-16 flex flex-col items-center">
                   <div className="bg-muted/50 size-16 flex items-center justify-center rounded-full mb-4">
                     <Slash className="h-8 w-8 text-muted-foreground/70" />
@@ -546,7 +686,7 @@ export default function LogsPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y">
-                        {logs.map((log, index) => (
+                        {getPaginatedLogs().map((log: Log, index: number) => (
                           <tr
                             key={`${log.timestamp}-${index}`}
                             className="group hover:bg-muted/50 transition-colors duration-200 cursor-pointer border-l-4 border-transparent hover:border-l-primary/70 hover:shadow-sm"
@@ -589,7 +729,7 @@ export default function LogsPage() {
                   {/* Pagination controls */}
                   <div className="flex justify-between items-center p-4 border-t">
                     <div className="text-sm text-muted-foreground">
-                      Showing <span className="font-medium">{logs.length === 0 ? 0 : startItem}</span> to <span className="font-medium">{endItem}</span> of <span className="font-medium">{total}</span> logs
+                      Showing <span className="font-medium">{filteredLogs.length === 0 ? 0 : startItem}</span> to <span className="font-medium">{endItem}</span> of <span className="font-medium">{total}</span> logs
                     </div>
                     <div className="flex gap-2">
                       <Button
@@ -605,7 +745,7 @@ export default function LogsPage() {
                       <Button
                         variant="outline"
                         size="sm"
-                        disabled={logs.length < filters.limit || loading}
+                        disabled={filteredLogs.length < filters.limit || loading}
                         onClick={() => setFilters(prev => ({ ...prev, page: prev.page + 1 }))}
                         className="hover:shadow-md transition-all duration-200"
                       >
