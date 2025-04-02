@@ -21,14 +21,8 @@ import json
 # Replace standard logging with Loguru
 from loguru import logger
 import sys
-from datetime import datetime
 
 # Setup logger
-# Remove standard logging setup
-# logging.basicConfig(level=logging.INFO)
-# logger = logging.getLogger("watchtower-ai")
-
-# --- Loguru Configuration ---
 logger.remove()  # Remove default handler
 
 # Console Sink (human-readable)
@@ -543,18 +537,19 @@ async def ingest_log(
     "/logs",
     response_model=list[LogEntryRead],
     tags=["logs"],
-    summary="Retrieve log entries",
-    description="Get log entries with optional filtering by service, environment, level, and time range.",
-    response_description="List of matching log entries, sorted by timestamp (newest first)"
+    summary="Retrieve logs",
+    description="Get logs with optional filtering by service, environment, level, and time range.",
+    response_description="List of matching logs, sorted by timestamp (newest first)"
 )
 async def get_logs(
     service_name: str = Query(None, description="Filter by service name"),
-    environment: str = Query(None, description="Filter by environment (dev/staging/production)"),
-    level: str = Query(None, description="Filter by log level (INFO/WARN/ERROR)"),
+    environment: str = Query(None, description="Filter by environment"),
+    level: str = Query(None, description="Filter by log level"),
     start_time: datetime = Query(None, description="Filter logs after this time"),
-    end_time: datetime = Query(None, description="Filter logs before this time")
+    end_time: datetime = Query(None, description="Filter logs before this time"),
+    skip_invalid: bool = Query(True, description="Skip logs with invalid format")
 ):
-    logger.info("📄 Retrieving logs with filters")
+    logger.info("📝 Fetching logs...")
 
     # Build filter criteria
     filter_criteria = {}
@@ -564,31 +559,56 @@ async def get_logs(
         filter_criteria["environment"] = environment
     if level:
         filter_criteria["level"] = level
+    if start_time or end_time:
+        filter_criteria["timestamp"] = {}
+        if start_time:
+            filter_criteria["timestamp"]["$gte"] = start_time
+        if end_time:
+            filter_criteria["timestamp"]["$lte"] = end_time
 
-    # Date range filters
-    date_filter = {}
-    if start_time:
-        date_filter["$gte"] = start_time
-    if end_time:
-        date_filter["$lte"] = end_time
-    if date_filter:
-        filter_criteria["timestamp"] = date_filter
+    # Only include documents with a valid _id field if skip_invalid is True
+    if skip_invalid:
+        filter_criteria["_id"] = {"$exists": True, "$ne": None}
 
     async def fetch_logs():
         cursor = MongoDB.log_entries.find(filter_criteria).sort("timestamp", DESCENDING)
-        logs = await cursor.to_list(length=100)  # Limit to 100 logs
+        logs = await cursor.to_list(length=100)
         formatted_logs = []
 
-        # Convert data to match the schema
         for log in logs:
-            log["_id"] = str(log["_id"])
-            formatted_logs.append(log)
+            try:
+                # Ensure _id exists and is valid
+                if "_id" not in log or not log["_id"]:
+                    logger.warning(f"Log missing or has empty _id field: {log}")
+                    continue
 
+                # Convert ObjectId to string safely
+                try:
+                    log["_id"] = str(log["_id"])
+                except Exception as e:
+                    logger.warning(f"Failed to convert _id to string: {e}")
+                    continue
+
+                # Check for required fields
+                required_fields = ["message", "service_name", "level", "timestamp"]
+                if not all(field in log for field in required_fields):
+                    logger.warning(f"Log missing required fields: {log}")
+                    continue
+
+                formatted_logs.append(log)
+            except Exception as e:
+                logger.warning(f"Error processing log entry: {e}")
+                continue
+
+        logger.info(f"✅ {len(formatted_logs)} logs fetched")
         return formatted_logs
 
-    logs = await perform_db_operation(fetch_logs)
-    logger.info(f"✅ {len(logs)} logs fetched")
-    return logs
+    try:
+        logs = await perform_db_operation(fetch_logs)
+        return logs
+    except Exception as e:
+        logger.error(f"Error fetching logs: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error retrieving logs")
 
 @app.get(
     "/alerts",

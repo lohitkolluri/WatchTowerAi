@@ -3,40 +3,7 @@ from typing import Any
 from pydantic import BaseModel, Field, GetCoreSchemaHandler
 from pydantic_core import core_schema
 from bson import ObjectId
-
-class PyObjectId(str):
-    @classmethod
-    def __get_pydantic_core_schema__(
-        cls,
-        _source_type: Any,
-        _handler: GetCoreSchemaHandler
-    ) -> core_schema.CoreSchema:
-        return core_schema.union_schema(
-            [
-                core_schema.is_instance_schema(ObjectId),
-                core_schema.chain_schema([
-                    core_schema.str_schema(),
-                    core_schema.no_info_plain_validator_function(cls.validate),
-                ]),
-            ],
-            serialization=core_schema.plain_serializer_function_ser_schema(
-                lambda x: str(x) if isinstance(x, ObjectId) else x
-            ),
-        )
-
-    @classmethod
-    def validate(cls, value):
-        if isinstance(value, ObjectId):
-            return value
-        if isinstance(value, str):
-            # Don't try to convert empty strings to ObjectId
-            if not value:
-                raise ValueError("Empty string is not a valid ObjectId")
-            try:
-                return ObjectId(value)
-            except ValueError:
-                pass
-        raise ValueError(f"'{value}' is not a valid ObjectId")
+from .models import PyObjectId
 
 class LogEntryCreate(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)

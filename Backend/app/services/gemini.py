@@ -31,7 +31,7 @@ generation_config = {
 # Create the generative model.
 model = None
 API_KEY = settings.GEMINI_API_KEY
-MODEL_NAME = "gemini-2.0-flash"  # Updated to use the same model as the working curl command
+MODEL_NAME = "gemini-1.5-pro"  # Updated to use the same model as the working curl command
 
 try:
     model = genai.GenerativeModel(
@@ -65,7 +65,7 @@ async def check_gemini_api_availability():
     try:
         # Use httpx for async HTTP requests
         async with httpx.AsyncClient(timeout=5.0) as client:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={API_KEY}"
+            url = f"https://generativelanguage.googleapis.com/v1/models/{MODEL_NAME}:generateContent?key={API_KEY}"
 
             # Simple payload similar to the working curl command
             payload = {
@@ -164,7 +164,7 @@ async def call_gemini_api(log: LogEntryCreate) -> str:
 
         # Fall back to direct API call if model approach fails
         async with httpx.AsyncClient(timeout=10.0) as client:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={API_KEY}"
+            url = f"https://generativelanguage.googleapis.com/v1/models/{MODEL_NAME}:generateContent?key={API_KEY}"
 
             payload = {
                 "contents": [{

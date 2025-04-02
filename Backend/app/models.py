@@ -15,16 +15,30 @@ class PyObjectId(str):
     ) -> core_schema.CoreSchema:
         return core_schema.union_schema(
             [
-                core_schema.str_schema(),
                 core_schema.is_instance_schema(ObjectId),
-            ]
+                core_schema.chain_schema([
+                    core_schema.str_schema(),
+                    core_schema.no_info_plain_validator_function(cls.validate),
+                ]),
+            ],
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                lambda x: str(x) if isinstance(x, ObjectId) else x
+            ),
         )
 
     @classmethod
     def validate(cls, value):
-        if not isinstance(value, (str, ObjectId)):
-            raise ValueError("Invalid ObjectId")
-        return str(value)
+        if isinstance(value, ObjectId):
+            return value
+        if isinstance(value, str):
+            # Don't try to convert empty strings to ObjectId
+            if not value:
+                raise ValueError("Empty string is not a valid ObjectId")
+            try:
+                return ObjectId(value)
+            except ValueError:
+                pass
+        raise ValueError(f"'{value}' is not a valid ObjectId")
 
 # MongoDB document models
 class LogEntry(BaseModel):
