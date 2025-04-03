@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
 import { ThemeProvider } from '@/components/theme-provider';
-import { Toaster } from "sonner";
+import { ClientRootLayout } from './client-layout';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -48,27 +48,9 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          {children}
-          <Toaster
-            position="top-right"
-            closeButton
-            theme="system"
-            className="toaster-container"
-            toastOptions={{
-              style: {
-                background: 'hsl(var(--background))',
-                color: 'hsl(var(--foreground))',
-                border: '1px solid hsl(var(--border))',
-              },
-              className: "toast-root",
-              classNames: {
-                success: "toast-success",
-                error: "toast-error",
-                warning: "toast-warning",
-                info: "toast-info"
-              }
-            }}
-          />
+          <ClientRootLayout>
+            {children}
+          </ClientRootLayout>
         </ThemeProvider>
       </body>
     </html>

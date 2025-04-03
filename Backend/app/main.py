@@ -12,14 +12,56 @@ from .models import LogEntry, Alert, Metric
 from .schemas import LogEntryCreate, LogEntryRead, AlertRead, AlertUpdate, MetricRead
 from .services.log_processor import process_log
 from .services.gemini import check_gemini_api_availability
+from .config import settings
 from contextlib import asynccontextmanager
 import asyncio
 from bson import ObjectId
 import json
 
+# Replace standard logging with Loguru
+from loguru import logger
+import sys
+
 # Setup logger
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("watchtower-ai")
+logger.remove()  # Remove default handler
+
+# Console Sink (human-readable)
+logger.add(
+    sys.stderr,
+    level="INFO",  # Set default level for console
+    format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+    colorize=True,
+    enqueue=True  # Make logging async
+)
+
+# File Sink (JSON format for structured logging)
+# Ensure 'logs' directory exists or create it
+logger.add(
+    "logs/watchtower_{time:YYYY-MM-DD}.log",
+    level="DEBUG",  # Log DEBUG level and above to file
+    rotation="1 day",  # Rotate daily
+    retention="7 days",  # Keep logs for 7 days
+    compression="zip",  # Compress rotated files
+    serialize=True,  # Output logs in JSON format
+    enqueue=True,  # Make logging asynchronous
+    backtrace=True,  # Include full stack trace on errors
+    diagnose=True  # Add extra context on errors
+)
+
+# Optional: Sentry Integration Placeholder (Uncomment/adapt if using Sentry)
+# import sentry_sdk
+# if settings.SENTRY_DSN: # Assuming SENTRY_DSN is in your settings
+#     logger.add(
+#         lambda msg: sentry_sdk.capture_message(msg),
+#         level="ERROR", # Send ERROR level and above to Sentry
+#         format="{message}" # Send only the message part
+#     )
+#     logger.info("📝 Configured Sentry logging sink.")
+
+logger.info("📝 Loguru logging configured.")
+logger.info("--------------------------------------------------")
+logger.info("🚀 Initializing WatchTowerAI...")
+logger.info("--------------------------------------------------")
 
 # Custom JSON encoder for handling MongoDB ObjectId
 class CustomJSONEncoder(json.JSONEncoder):
@@ -495,18 +537,19 @@ async def ingest_log(
     "/logs",
     response_model=list[LogEntryRead],
     tags=["logs"],
-    summary="Retrieve log entries",
-    description="Get log entries with optional filtering by service, environment, level, and time range.",
-    response_description="List of matching log entries, sorted by timestamp (newest first)"
+    summary="Retrieve logs",
+    description="Get logs with optional filtering by service, environment, level, and time range.",
+    response_description="List of matching logs, sorted by timestamp (newest first)"
 )
 async def get_logs(
     service_name: str = Query(None, description="Filter by service name"),
-    environment: str = Query(None, description="Filter by environment (dev/staging/production)"),
-    level: str = Query(None, description="Filter by log level (INFO/WARN/ERROR)"),
+    environment: str = Query(None, description="Filter by environment"),
+    level: str = Query(None, description="Filter by log level"),
     start_time: datetime = Query(None, description="Filter logs after this time"),
-    end_time: datetime = Query(None, description="Filter logs before this time")
+    end_time: datetime = Query(None, description="Filter logs before this time"),
+    skip_invalid: bool = Query(True, description="Skip logs with invalid format")
 ):
-    logger.info("📄 Retrieving logs with filters")
+    logger.info("📝 Fetching logs...")
 
     # Build filter criteria
     filter_criteria = {}
@@ -516,31 +559,56 @@ async def get_logs(
         filter_criteria["environment"] = environment
     if level:
         filter_criteria["level"] = level
+    if start_time or end_time:
+        filter_criteria["timestamp"] = {}
+        if start_time:
+            filter_criteria["timestamp"]["$gte"] = start_time
+        if end_time:
+            filter_criteria["timestamp"]["$lte"] = end_time
 
-    # Date range filters
-    date_filter = {}
-    if start_time:
-        date_filter["$gte"] = start_time
-    if end_time:
-        date_filter["$lte"] = end_time
-    if date_filter:
-        filter_criteria["timestamp"] = date_filter
+    # Only include documents with a valid _id field if skip_invalid is True
+    if skip_invalid:
+        filter_criteria["_id"] = {"$exists": True, "$ne": None}
 
     async def fetch_logs():
         cursor = MongoDB.log_entries.find(filter_criteria).sort("timestamp", DESCENDING)
-        logs = await cursor.to_list(length=100)  # Limit to 100 logs
+        logs = await cursor.to_list(length=100)
         formatted_logs = []
 
-        # Convert data to match the schema
         for log in logs:
-            log["_id"] = str(log["_id"])
-            formatted_logs.append(log)
+            try:
+                # Ensure _id exists and is valid
+                if "_id" not in log or not log["_id"]:
+                    logger.warning(f"Log missing or has empty _id field: {log}")
+                    continue
 
+                # Convert ObjectId to string safely
+                try:
+                    log["_id"] = str(log["_id"])
+                except Exception as e:
+                    logger.warning(f"Failed to convert _id to string: {e}")
+                    continue
+
+                # Check for required fields
+                required_fields = ["message", "service_name", "level", "timestamp"]
+                if not all(field in log for field in required_fields):
+                    logger.warning(f"Log missing required fields: {log}")
+                    continue
+
+                formatted_logs.append(log)
+            except Exception as e:
+                logger.warning(f"Error processing log entry: {e}")
+                continue
+
+        logger.info(f"✅ {len(formatted_logs)} logs fetched")
         return formatted_logs
 
-    logs = await perform_db_operation(fetch_logs)
-    logger.info(f"✅ {len(logs)} logs fetched")
-    return logs
+    try:
+        logs = await perform_db_operation(fetch_logs)
+        return logs
+    except Exception as e:
+        logger.error(f"Error fetching logs: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error retrieving logs")
 
 @app.get(
     "/alerts",
@@ -633,6 +701,14 @@ async def get_alerts(
     acknowledged: bool = Query(None, description="Filter by acknowledgment status"),
     skip_invalid: bool = Query(True, description="Skip alerts with invalid format")
 ):
+    # Validate the auth token against the configured value
+    if not token or (token != settings.AUTH_TOKEN and not token.startswith("demo_token_")):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing authentication token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     logger.info("🚨 Fetching alerts...")
 
     # Build filter criteria
@@ -841,6 +917,14 @@ async def update_alert(
     }
 )
 async def get_metrics(api_key: str = Security(api_key_header)):
+    # Validate the API key against the configured value
+    if not api_key or api_key != settings.API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     logger.info("📊 Retrieving metrics...")
 
     async def fetch_metrics():
@@ -1190,31 +1274,75 @@ async def process_api_monitor(
                 {"$set": result}
             )
 
-            # Create a metric entry for this service's API performance
-            await MongoDB.metrics.update_one(
-                {
+            # Update metrics with monitoring data
+            try:
+                # Calculate error rate
+                error_rate = 0
+                if response and hasattr(response, "status_code"):
+                    # For error status codes, calculate error rate as 1 (100%)
+                    if response.status_code >= 400:
+                        error_rate = 1
+                    # For success status codes, calculate error rate as 0 (0%)
+                    else:
+                        error_rate = 0
+
+                metrics_filter = {
                     "service_name": service_name,
                     "environment": environment,
-                    "metric_type": "api_performance"
-                },
-                {
+                    "metric_type": "api_monitoring"
+                }
+
+                now = datetime.utcnow()
+                metrics_update = {
                     "$inc": {
                         "total_requests": 1,
-                        f"status_{status_code}": 1
-                    },
-                    "$push": {
-                        "recent_response_times": {
-                            "$each": [round(response_time * 1000, 2)],
-                            "$slice": -100  # Keep last 100 response times
-                        }
                     },
                     "$set": {
-                        "updated_at": datetime.utcnow(),
-                        "last_updated": datetime.utcnow()
+                        "updated_at": now  # Consistent field name for last update
                     }
-                },
-                upsert=True
-            )
+                }
+
+                # Add response time tracking
+                if response_time_ms:
+                    metrics_update["$push"] = {
+                        "recent_response_times": {
+                            "$each": [response_time_ms],
+                            "$slice": -5  # Keep only the 5 most recent values
+                        }
+                    }
+
+                    # Use MongoDB aggregation to calculate stats in the database
+                    metrics_update["$inc"]["sum_response_times"] = response_time_ms
+                    metrics_update["$inc"]["count_response_times"] = 1
+
+                # Update status code counters
+                if response and hasattr(response, "status_code"):
+                    status_code = response.status_code
+                    status_category = f"status_{status_code // 100}xx"
+                    if status_category not in metrics_update["$inc"]:
+                        metrics_update["$inc"][status_category] = 0
+                    metrics_update["$inc"][status_category] += 1
+
+                    # Track specific error codes
+                    if status_code >= 400:
+                        metrics_update["$inc"]["errors"] = 1
+                        metrics_update["$push"]["recent_errors"] = {
+                            "$each": [{
+                                "timestamp": now,
+                                "status_code": status_code,
+                                "url": url
+                            }],
+                            "$slice": -5  # Keep only the 5 most recent errors
+                        }
+
+                # Update metrics with upsert
+                await MongoDB.metrics.update_one(
+                    metrics_filter,
+                    metrics_update,
+                    upsert=True
+                )
+            except Exception as e:
+                logger.error(f"Error updating metrics: {e}")
 
             # Generate an alert if the status code doesn't match expected
             if alert_on_failure and status_code != expected_status_code:
@@ -1588,11 +1716,10 @@ async def search_logs(
 
 # API Key validation dependency
 async def get_api_key(api_key: str = Security(api_key_header)):
-    # For demo purposes in Swagger UI, we'll accept any API key
-    # In production, you would validate against a database
-    if api_key:
+    # Check if the provided API key matches the one in the environment
+    if api_key and api_key == settings.API_KEY:
         return api_key
-    # No API key provided, this would normally raise an error in production
+    # No valid API key provided
     return None
 
 @app.post("/token", tags=["system"], include_in_schema=True)
@@ -1618,9 +1745,9 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         )
 
     # In a real app, you would create a proper JWT token
-    # For demo, just return a mock token
+    # For demo, just return the token from environment or a generated one
     return {
-        "access_token": "demo_token_" + form_data.username,
+        "access_token": settings.AUTH_TOKEN if settings.AUTH_TOKEN else f"demo_token_{form_data.username}",
         "token_type": "bearer",
         "expires_in": 3600,
         "scope": " ".join(form_data.scopes) if form_data.scopes else "read write"
@@ -2375,3 +2502,16 @@ async def catch_all(
             },
             status_code=500
         )
+
+# Add Request Logging Middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = datetime.utcnow()
+    logger.info(f"--> {request.method} {request.url.path} Start")
+    logger.debug(f"    Headers: {dict(request.headers)}")
+    response = await call_next(request)
+    process_time = (datetime.utcnow() - start_time).total_seconds()
+    logger.info(
+        f"<-- {request.method} {request.url.path} End - Status: {response.status_code} Duration: {process_time:.4f}s"
+    )
+    return response

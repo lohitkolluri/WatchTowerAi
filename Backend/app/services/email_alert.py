@@ -9,7 +9,14 @@ from jinja2 import Environment, FileSystemLoader, TemplateError
 from tenacity import retry, stop_after_attempt, wait_exponential
 from ..config import settings
 
-logger = logging.getLogger(__name__)
+# Replace standard logging with Loguru
+from loguru import logger
+
+# Add markdown library for converting remediation text to HTML
+import markdown
+
+# Remove standard logger
+# logger = logging.getLogger(__name__)
 
 # Set up Jinja2 environment
 templates_dir = Path(__file__).parents[2] / "email_templates"  # This points to Backend/email_templates
@@ -40,6 +47,11 @@ async def send_email_alert(subject: str, template_name: str, context: dict) -> N
     logger.info(f"📧 Preparing to send email with subject: {subject}")
     logger.info(f"Using template: {template_name}")
     logger.debug(f"Email context: {context}")
+
+    # Convert remediation markdown to HTML if it exists
+    if "remediation" in context and context["remediation"]:
+        context["remediation"] = convert_markdown_to_html(context["remediation"])
+        logger.debug("Converted remediation markdown to HTML")
 
     # Verify SMTP settings are available
     if not all([
@@ -104,6 +116,33 @@ async def send_email_alert(subject: str, template_name: str, context: dict) -> N
     except Exception as e:
         logger.exception(f"❌ Email sending failed: {str(e)}")
         raise
+
+def convert_markdown_to_html(text: str) -> str:
+    """
+    Convert markdown-formatted text to HTML using the markdown library.
+
+    Args:
+        text: Markdown-formatted text
+
+    Returns:
+        HTML-formatted text
+    """
+    try:
+        # Add extra extensions for better formatting
+        html = markdown.markdown(
+            text,
+            extensions=[
+                'markdown.extensions.fenced_code',  # Support for ```code blocks```
+                'markdown.extensions.tables',       # Support for tables
+                'markdown.extensions.nl2br',        # Convert newlines to <br>
+                'markdown.extensions.sane_lists'    # Better list handling
+            ]
+        )
+        return html
+    except Exception as e:
+        logger.error(f"Error converting markdown to HTML: {e}")
+        # If conversion fails, return the original text
+        return f"<p>{text}</p>"
 
 async def send_alert_for_log(service_name: str, environment: str, level: str,
                             message: str, remediation: str = None) -> None:

@@ -10,7 +10,11 @@ from .gemini import call_gemini_api
 from .email_alert import send_email_alert
 from .log_classifier import classify_log
 
-logger = logging.getLogger(__name__)
+# Replace standard logging with Loguru
+from loguru import logger
+
+# Remove standard logger
+# logger = logging.getLogger(__name__)
 
 async def process_log(log) -> None:
     """

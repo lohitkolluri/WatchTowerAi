@@ -8,7 +8,11 @@ import asyncio
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-logger = logging.getLogger(__name__)
+# Replace standard logging with Loguru
+from loguru import logger
+
+# Remove standard logger
+# logger = logging.getLogger(__name__)
 
 # Configure the Google Generative AI (Gemini) package with your API key.
 try:
@@ -27,7 +31,7 @@ generation_config = {
 # Create the generative model.
 model = None
 API_KEY = settings.GEMINI_API_KEY
-MODEL_NAME = "gemini-2.0-flash"  # Updated to use the same model as the working curl command
+MODEL_NAME = "gemini-1.5-pro"  # Updated to use the same model as the working curl command
 
 try:
     model = genai.GenerativeModel(
@@ -61,7 +65,7 @@ async def check_gemini_api_availability():
     try:
         # Use httpx for async HTTP requests
         async with httpx.AsyncClient(timeout=5.0) as client:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={API_KEY}"
+            url = f"https://generativelanguage.googleapis.com/v1/models/{MODEL_NAME}:generateContent?key={API_KEY}"
 
             # Simple payload similar to the working curl command
             payload = {
@@ -116,7 +120,12 @@ async def call_gemini_api(log: LogEntryCreate) -> str:
         return get_fallback_remediation(log)
 
     try:
-        # Create prompt from log details
+        # Extract log classification info if available
+        log_type = getattr(log, "log_type", None) or "unknown"
+        log_subtype = getattr(log, "log_subtype", None) or "unknown"
+        entities = getattr(log, "entities", {}) or {}
+
+        # Create enhanced prompt using log classification data
         prompt = (
             f"You are a senior system administrator analyzing a log entry. "
             f"Provide concise, focused remediation suggestion, no more than 100 words. The priority is mentioning key issues and their remedies without too much of explanation.\n\n"
@@ -125,7 +134,18 @@ async def call_gemini_api(log: LogEntryCreate) -> str:
             f"- Environment: {log.environment}\n"
             f"- Level: {log.level}\n"
             f"- Message: {log.message}\n"
+            f"- Log Type: {log_type}\n"
+            f"- Log Subtype: {log_subtype}\n"
         )
+
+        # Add entities if available
+        if entities and isinstance(entities, dict) and len(entities) > 0:
+            prompt += "- Entities:\n"
+            for entity_type, values in entities.items():
+                if isinstance(values, list):
+                    prompt += f"  - {entity_type}: {', '.join(values)}\n"
+                else:
+                    prompt += f"  - {entity_type}: {values}\n"
 
         # Use model if available (legacy approach)
         if model:
@@ -144,7 +164,7 @@ async def call_gemini_api(log: LogEntryCreate) -> str:
 
         # Fall back to direct API call if model approach fails
         async with httpx.AsyncClient(timeout=10.0) as client:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={API_KEY}"
+            url = f"https://generativelanguage.googleapis.com/v1/models/{MODEL_NAME}:generateContent?key={API_KEY}"
 
             payload = {
                 "contents": [{
@@ -186,6 +206,26 @@ def get_fallback_remediation(log: LogEntryCreate) -> str:
     level = log.level.upper()
     service = log.service_name.lower()
 
+    # Use log classification if available
+    log_type = getattr(log, "log_type", None)
+    log_subtype = getattr(log, "log_subtype", None)
+
+    # If we have classification data, use it for more targeted fallback
+    if log_type and log_type != "unknown":
+        if log_type in FALLBACK_REMEDIATIONS:
+            base_remediation = FALLBACK_REMEDIATIONS[log_type]
+
+            # Add subtype-specific advice if available
+            if log_subtype and log_subtype != "unknown" and log_subtype != "general":
+                if log_subtype in FALLBACK_REMEDIATIONS:
+                    return f"{base_remediation} {FALLBACK_REMEDIATIONS[log_subtype]}"
+                elif "connection" in log_subtype:
+                    return f"{base_remediation} {FALLBACK_REMEDIATIONS['connection']}"
+                elif "timeout" in log_subtype:
+                    return f"{base_remediation} {FALLBACK_REMEDIATIONS['timeout']}"
+
+            return base_remediation
+
     # Look for common patterns in the message
     if "database" in message or "db" in message or "sql" in message or "query" in message:
         if "timeout" in message or "connection" in message:
@@ -200,22 +240,15 @@ def get_fallback_remediation(log: LogEntryCreate) -> str:
     if "memory" in message or "out of memory" in message:
         return FALLBACK_REMEDIATIONS["memory"]
 
-    if "auth" in message or "login" in message or "permission" in message:
+    if "auth" in message or "login" in message or "password" in message or "credential" in message:
         return FALLBACK_REMEDIATIONS["authentication"]
 
-    if "connect" in message or "connection" in message:
-        return FALLBACK_REMEDIATIONS["connection"]
+    # Default fallback based on log level
+    if level in ["CRITICAL", "FATAL"]:
+        return "This is a critical issue that requires immediate attention. Check system resource availability, recent deployments, and service dependencies."
 
-    # Service-based suggestions
-    if "kubernetes" in service or "k8s" in service or "container" in service:
-        return "Check Kubernetes pod logs and events. Verify resource limits and readiness/liveness probes."
+    if level == "ERROR":
+        return "Investigate the root cause by checking system logs, recent code changes, and dependencies. Consider rolling back recent changes if the error persists."
 
-    if "api" in service or "gateway" in service:
-        return "Verify API endpoints are accessible and upstream services are responding correctly. Check rate limits and authentication."
-
-    # Level-based generic suggestions
-    if level == "CRITICAL" or level == "FATAL":
-        return "This is a critical issue requiring immediate attention. Check system resources, recent deployments, and crucial services."
-
-    # Fallback for when nothing specific is found
-    return FALLBACK_REMEDIATIONS["error"]
+    # Generic fallback
+    return "Check system logs for more details. Verify service connectivity, available resources, and recent code deployments."

@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     # Add fallback mode option for development/testing
     ENABLE_FALLBACK_MODE: bool = os.getenv("ENABLE_FALLBACK_MODE", "false").lower() == "true"
 
+    # Authentication
+    API_KEY: str = os.getenv("API_KEY", "test_api_key")
+    AUTH_TOKEN: str = os.getenv("AUTH_TOKEN", "demo_token_test")
+
     # Gemini API
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 
