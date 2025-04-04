@@ -100,7 +100,8 @@ async def create_indexes():
         IndexModel([("timestamp", DESCENDING)]),
         IndexModel([("service_name", ASCENDING)]),
         IndexModel([("environment", ASCENDING)]),
-        IndexModel([("level", ASCENDING)])
+        IndexModel([("level", ASCENDING)]),
+        IndexModel([("confidence_score", ASCENDING)])
     ]
     await MongoDB.log_entries.create_indexes(log_indexes)
 

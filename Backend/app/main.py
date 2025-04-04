@@ -404,63 +404,7 @@ example_log = {
     response_model=LogEntryRead,
     status_code=status.HTTP_201_CREATED,
     tags=["logs"],
-    summary="Ingest a log entry from any service",
-    description="""
-    Submit a log entry to be processed and analyzed.
-
-    This endpoint is flexible and can accept data from any service.
-    Required fields:
-    - service_name: Name of the service sending the log
-
-    All other fields are optional and will be stored as received.
-    """,
-    responses={
-        201: {
-            "description": "Log entry successfully created and processing triggered",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "id": "6070643e-1e7d-4c33-9a2e-23a71a9387cc",
-                        "timestamp": "2023-08-18T14:35:12.345Z",
-                        "service_name": "payment-service",
-                        "environment": "production",
-                        "level": "ERROR",
-                        "message": "Payment gateway connection timeout",
-                        "error_code": "ERR_GATEWAY_TIMEOUT",
-                        "correlation_id": "7f52cdb3-9c23-4d7e-89d1-98234c70a381",
-                        "log_type": "database",
-                        "log_subtype": "connection_error",
-                        "confidence_score": 0.92,
-                        "entities": {
-                            "ip_address": "192.168.1.1",
-                            "resource_id": "pg-instance-12345"
-                        },
-                        "tags": ["database", "timeout", "payment"]
-                    }
-                }
-            }
-        },
-        400: {
-            "description": "Missing required field",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "detail": "Service name is required either in payload or as a query parameter"
-                    }
-                }
-            }
-        },
-        500: {
-            "description": "Server error",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "detail": "Error storing log entry"
-                    }
-                }
-            }
-        }
-    }
+    summary="Ingest a log entry from any service"
 )
 async def ingest_log(
     payload: dict,
@@ -487,11 +431,11 @@ async def ingest_log(
     except (ValueError, TypeError):
         extracted_timestamp = datetime.utcnow()
 
-    logger.info(f"�� Ingesting log from {extracted_service} [{extracted_level}]")
+    logger.info(f"📥 Ingesting log from {extracted_service} [{extracted_level}]")
 
     try:
         # Create new log entry document with standardized fields
-        new_log = LogEntry(
+        new_log = LogEntryCreate(
             timestamp=extracted_timestamp,
             service_name=extracted_service,
             environment=extracted_environment,
@@ -500,9 +444,14 @@ async def ingest_log(
             error_code=payload.get("error_code"),
             correlation_id=payload.get("correlation_id"),
             raw_payload=payload,  # Store the entire original payload
+            confidence_score=None,  # Explicitly initialize classification fields
+            log_type=None,
+            log_subtype=None,
+            entities=None,
+            tags=None
         )
 
-        # Insert into MongoDB - improved approach: exclude ID fields and let MongoDB generate one
+        # Convert to dict for MongoDB insertion
         log_dict = new_log.model_dump(exclude={"id", "_id"}, by_alias=True)
 
         async def insert_log():
@@ -515,14 +464,13 @@ async def ingest_log(
             if not document:
                 raise HTTPException(status_code=500, detail="Failed to retrieve inserted document")
 
-            # Convert ObjectId to string to avoid serialization issues
-            document["_id"] = str(document["_id"])
-            return document
+            # Convert to LogEntryRead model
+            return LogEntryRead.from_mongo(document)
 
         inserted_doc = await perform_db_operation(insert_log)
 
-        # Process log in background
-        background_tasks.add_task(process_log, new_log)
+        # Process log in background - pass the dictionary with _id for processing
+        background_tasks.add_task(process_log, {"_id": str(inserted_doc.id), **log_dict})
         logger.info("✅ Log stored and processing triggered")
         return inserted_doc
 
@@ -577,25 +525,12 @@ async def get_logs(
 
         for log in logs:
             try:
-                # Ensure _id exists and is valid
-                if "_id" not in log or not log["_id"]:
-                    logger.warning(f"Log missing or has empty _id field: {log}")
-                    continue
-
-                # Convert ObjectId to string safely
-                try:
-                    log["_id"] = str(log["_id"])
-                except Exception as e:
-                    logger.warning(f"Failed to convert _id to string: {e}")
-                    continue
-
-                # Check for required fields
-                required_fields = ["message", "service_name", "level", "timestamp"]
-                if not all(field in log for field in required_fields):
-                    logger.warning(f"Log missing required fields: {log}")
-                    continue
-
-                formatted_logs.append(log)
+                # Convert MongoDB document to LogEntryRead model
+                formatted_log = LogEntryRead.from_mongo(log)
+                if formatted_log:
+                    formatted_logs.append(formatted_log)
+                else:
+                    logger.warning(f"Could not format log: {log}")
             except Exception as e:
                 logger.warning(f"Error processing log entry: {e}")
                 continue
@@ -787,7 +722,7 @@ async def update_alert(
     alert_id: str,
     update: AlertUpdate
 ):
-    logger.info(f"📝 Acknowledging alert: {alert_id}")
+    logger.info(f"📝 Updating alert: {alert_id}")
 
     # Validate ID early to prevent errors
     if not alert_id or len(alert_id) != 24:
@@ -801,10 +736,38 @@ async def update_alert(
         raise HTTPException(status_code=400, detail="Invalid alert ID format")
 
     async def update_alert_op():
-        # Use proper ObjectId for queries
+        # Get current alert state
+        current_alert = await MongoDB.alerts.find_one({"_id": object_id})
+        if not current_alert:
+            raise HTTPException(status_code=404, detail="Alert not found")
+
+        # Build update data based on what was provided
+        update_data = {}
+
+        if update.acknowledged is not None:
+            update_data["acknowledged"] = update.acknowledged
+            # Only update status if acknowledged state changes
+            if update.acknowledged:
+                update_data["status"] = "acknowledged"
+            elif not update.acknowledged and current_alert.get("status") == "acknowledged":
+                update_data["status"] = "active"
+
+        # Allow explicit status update if provided
+        if update.status is not None:
+            update_data["status"] = update.status
+            # Ensure acknowledged state matches status
+            if update.status == "acknowledged":
+                update_data["acknowledged"] = True
+            elif update.status == "active":
+                update_data["acknowledged"] = False
+
+        if not update_data:
+            # No changes requested
+            return current_alert
+
         result = await MongoDB.alerts.update_one(
             {"_id": object_id},
-            {"$set": {"acknowledged": update.acknowledged}}
+            {"$set": update_data}
         )
 
         if result.matched_count == 0:

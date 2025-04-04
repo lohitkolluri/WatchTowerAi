@@ -127,26 +127,23 @@ function buildQueryString(params?: Record<string, any>): string {
 const getAuthHeaders = (requireAuth: boolean = false) => {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    'Pragma': 'no-cache',
+    'Expires': '0'
   };
 
-  // Add API key - try both localStorage methods to improve compatibility
+  // Add API key - standardized to use NEXT_PUBLIC_API_KEY
   let apiKey;
 
   if (typeof window !== 'undefined') {
-    // Try both potential localStorage keys to be safe
-    apiKey = window.localStorage.getItem('NEXT_PUBLIC_API_KEY') ||
-             window.localStorage.getItem('api_key');
-
-    console.log('API Key from localStorage:', apiKey ? 'Found key' : 'No key in localStorage');
+    apiKey = window.localStorage.getItem('NEXT_PUBLIC_API_KEY');
   }
 
   // Fallback to environment variable or default from .env
   if (!apiKey) {
     apiKey = process.env.NEXT_PUBLIC_API_KEY || 'test_api_key';
-    console.log('Using fallback API Key from env or default');
   }
 
-  // Ensure API key is properly set
   headers['X-API-Key'] = apiKey;
 
   // Add OAuth token if authentication is required
@@ -155,13 +152,11 @@ const getAuthHeaders = (requireAuth: boolean = false) => {
 
     if (typeof window !== 'undefined') {
       token = window.localStorage.getItem('auth_token');
-      console.log('Auth token from localStorage:', token ? 'Found token' : 'No token in localStorage');
     }
 
     // Fallback to default if not in localStorage
     if (!token) {
       token = process.env.NEXT_PUBLIC_AUTH_TOKEN || 'demo_token_test';
-      console.log('Using fallback auth token from env or default');
     }
 
     // Ensure token is formatted correctly
@@ -171,13 +166,6 @@ const getAuthHeaders = (requireAuth: boolean = false) => {
       headers['Authorization'] = token;
     }
   }
-
-  // Debug: Log headers being sent (with sensitive parts redacted)
-  console.log('API Headers:', {
-    'Content-Type': headers['Content-Type'],
-    'X-API-Key': headers['X-API-Key'] ? '**present**' : '**missing**',
-    'Authorization': headers['Authorization'] ? '**present**' : '**missing**',
-  });
 
   return headers;
 };
@@ -193,169 +181,80 @@ const validateApiUrl = () => {
   }
 };
 
+// Default fetch options
+const defaultFetchOptions: RequestInit = {
+  mode: 'cors',
+  credentials: 'include'
+};
+
 // API endpoints
 export const api = {
   // Logs endpoints
   logs: {
     getAll: async (params?: FilterParams): Promise<PaginatedResponse<Log>> => {
-      try {
-        validateApiUrl();
-
-        // Clean and encode parameters, particularly the search term
-        const cleanParams = { ...params };
-        if (cleanParams.search) {
-          cleanParams.search = cleanParams.search.trim();
-          console.log(`API: Searching logs with term: "${cleanParams.search}"`);
-        }
-
-        const queryString = buildQueryString(cleanParams);
-        console.log(`API: Fetching logs from: ${API_BASE_URL}/logs${queryString}`);
-
-        const response = await fetch(`${API_BASE_URL}/logs${queryString}`, {
-          headers: {
-            ...getAuthHeaders(),
-          },
-          mode: 'cors',
-          credentials: 'include'
-        });
-
-        const data = await handleResponse<any>(response, 'json');
-
-        // Log the response data structure for debugging
-        console.debug('Logs response structure:', {
-          isArray: Array.isArray(data),
-          hasLogsProperty: data?.logs !== undefined,
-          hasDataProperty: data?.data !== undefined,
-          totalCount: data?.total || (Array.isArray(data?.logs) ? data.logs.length : 0)
-        });
-
-        // Format the response to a consistent structure
-        const formattedResponse: PaginatedResponse<Log> = {
-          data: Array.isArray(data) ? data :
-                Array.isArray(data?.logs) ? data.logs :
-                Array.isArray(data?.data) ? data.data : [],
-          total: data?.total || (Array.isArray(data) ? data.length :
-                 Array.isArray(data?.logs) ? data.logs.length :
-                 Array.isArray(data?.data) ? data.data.length : 0),
-          page: data?.page || 1,
-          pageSize: data?.pageSize || (data?.limit || 50),
-          totalPages: data?.totalPages || Math.ceil((data?.total || 0) / (data?.limit || 50))
-        };
-
-        return formattedResponse;
-      } catch (error) {
-        console.error('Error fetching logs:', error);
-        // Return empty data structure on error
-        return {
-          data: [],
-          total: 0,
-          page: 1,
-          pageSize: 0,
-          totalPages: 0
-        };
+      validateApiUrl();
+      const cleanParams = { ...params };
+      if (cleanParams.search) {
+        cleanParams.search = cleanParams.search.trim();
       }
-    },
-
-    search: async (params?: FilterParams & {
-      log_type?: string;
-      log_subtype?: string;
-      tag?: string;
-      entity_type?: string;
-      entity_value?: string;
-      confidence_min?: number;
-    }): Promise<PaginatedResponse<Log>> => {
-      // Maximum retry attempts for search
-      const MAX_RETRY = 2;
-      let retryCount = 0;
-
-      // Implement retry logic for search
-      const attemptSearch = async (): Promise<PaginatedResponse<Log>> => {
-        try {
-          validateApiUrl();
-
-          // Clean and encode search parameters
-          const cleanParams = { ...params };
-          if (cleanParams.search) {
-            cleanParams.search = cleanParams.search.trim();
-            console.log(`API: Searching logs with term: "${cleanParams.search}"`);
-          }
-
-          const queryString = buildQueryString(cleanParams);
-          console.log(`API: Searching logs at: ${API_BASE_URL}/logs/search${queryString}`);
-
-          const response = await fetch(`${API_BASE_URL}/logs/search${queryString}`, {
-            headers: {
-              ...getAuthHeaders(),
-            },
-            mode: 'cors',
-            credentials: 'include'
-          });
-
-          // Check if the response status indicates a server error (5xx)
-          if (response.status >= 500 && retryCount < MAX_RETRY) {
-            retryCount++;
-            console.warn(`Server error while searching logs. Retrying (${retryCount}/${MAX_RETRY})...`);
-            // Wait before retrying (exponential backoff)
-            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount - 1)));
-            return attemptSearch();
-          }
-
-          const data = await handleResponse<any>(response, 'json');
-
-          // Format the response to a consistent structure
-          const formattedResponse: PaginatedResponse<Log> = {
-            data: Array.isArray(data) ? data :
-                  Array.isArray(data?.logs) ? data.logs :
-                  Array.isArray(data?.data) ? data.data : [],
-            total: data?.total || (Array.isArray(data) ? data.length :
-                   Array.isArray(data?.logs) ? data.logs.length :
-                   Array.isArray(data?.data) ? data.data.length : 0),
-            page: data?.page || 1,
-            pageSize: data?.pageSize || (data?.limit || 50),
-            totalPages: data?.totalPages || Math.ceil((data?.total || 0) / (data?.limit || 50))
-          };
-
-          return formattedResponse;
-        } catch (error) {
-          // If we have retries left and it's a transient error, retry
-          if (retryCount < MAX_RETRY &&
-              (error instanceof ApiRequestError &&
-               ((error.statusCode === 0 || error.statusCode === undefined) || (error.statusCode && error.statusCode >= 500)))) {
-            retryCount++;
-            console.warn(`Error searching logs. Retrying (${retryCount}/${MAX_RETRY})...`, error);
-            // Wait before retrying (exponential backoff)
-            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount - 1)));
-            return attemptSearch();
-          }
-
-          console.error('Error searching logs:', error);
-          // Return empty data structure on error
-          return {
-            data: [],
-            total: 0,
-            page: 1,
-            pageSize: 0,
-            totalPages: 0
-          };
-        }
+      const queryString = buildQueryString(cleanParams);
+      const response = await fetch(`${API_BASE_URL}/logs${queryString}`, {
+        ...defaultFetchOptions,
+        headers: getAuthHeaders()
+      });
+      const data = await handleResponse<any>(response);
+      return {
+        data: Array.isArray(data) ? data :
+              Array.isArray(data?.logs) ? data.logs :
+              Array.isArray(data?.data) ? data.data : [],
+        total: data?.total || (Array.isArray(data) ? data.length :
+               Array.isArray(data?.logs) ? data.logs.length :
+               Array.isArray(data?.data) ? data.data.length : 0),
+        page: data?.page || 1,
+        pageSize: data?.pageSize || (data?.limit || 50),
+        totalPages: data?.totalPages || Math.ceil((data?.total || 0) / (data?.limit || 50))
       };
-
-      return attemptSearch();
     },
 
-    ingest: async (logData: any): Promise<void> => {
-      const response = await fetch(`${API_BASE_URL}/ingest`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAuthHeaders(),
-        },
-        body: JSON.stringify(logData),
-        mode: 'cors',
-        credentials: 'include'
+    getServicesList: async (): Promise<string[]> => {
+      validateApiUrl();
+      const response = await fetch(`${API_BASE_URL}/logs/services`, {
+        ...defaultFetchOptions,
+        headers: getAuthHeaders()
+      });
+      return handleResponse<string[]>(response);
+    },
+
+    search: async (params?: FilterParams): Promise<PaginatedResponse<Log>> => {
+      validateApiUrl();
+      const cleanParams = { ...params };
+      if (cleanParams.search) {
+        cleanParams.search = cleanParams.search.trim();
+      }
+      const queryString = buildQueryString(cleanParams);
+      const response = await fetch(`${API_BASE_URL}/logs/search${queryString}`, {
+        ...defaultFetchOptions,
+        headers: getAuthHeaders()
+      });
+      const data = await handleResponse<any>(response);
+      return {
+        data: Array.isArray(data) ? data : [],
+        total: Array.isArray(data) ? data.length : 0,
+        page: 1,
+        pageSize: 50,
+        totalPages: Math.ceil((Array.isArray(data) ? data.length : 0) / 50)
+      };
+    },
+
+    clear: async (): Promise<void> => {
+      validateApiUrl();
+      const response = await fetch(`${API_BASE_URL}/logs`, {
+        ...defaultFetchOptions,
+        method: 'DELETE',
+        headers: getAuthHeaders()
       });
       return handleResponse<void>(response, 'void');
-    },
+    }
   },
 
   // Alerts endpoints
@@ -495,33 +394,100 @@ export const api = {
     },
   },
 
-  // Endpoints monitoring
+  // Endpoints API
   endpoints: {
     getAll: async (): Promise<EndpointData[]> => {
-      return endpointService.getAllEndpoints();
+      validateApiUrl();
+      const timestamp = Date.now();
+      const response = await fetch(`${API_BASE_URL}/api/endpoints?_t=${timestamp}`, {
+        ...defaultFetchOptions,
+        headers: getAuthHeaders()
+      });
+      const data = await handleResponse<any>(response);
+      if (Array.isArray(data)) {
+        return data;
+      } else if (data && typeof data === 'object') {
+        if (data.endpoints && Array.isArray(data.endpoints)) {
+          return data.endpoints;
+        } else if (data.data && Array.isArray(data.data)) {
+          return data.data;
+        }
+      }
+      return [];
     },
 
     getById: async (id: string): Promise<EndpointResponse> => {
-      return endpointService.getEndpointById(id);
+      validateApiUrl();
+      const response = await fetch(`${API_BASE_URL}/api/endpoints/${id}`, {
+        ...defaultFetchOptions,
+        headers: getAuthHeaders()
+      });
+      return handleResponse<EndpointResponse>(response);
     },
 
-    create: async (data: CreateEndpointRequest): Promise<EndpointResponse> => {
-      return endpointService.createEndpoint(data);
+    create: async (endpointData: CreateEndpointRequest): Promise<EndpointResponse> => {
+      validateApiUrl();
+      const response = await fetch(`${API_BASE_URL}/api/endpoints`, {
+        ...defaultFetchOptions,
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(endpointData)
+      });
+      return handleResponse<EndpointResponse>(response);
     },
 
-    update: async (id: string, data: Partial<EndpointData>): Promise<EndpointResponse> => {
-      return endpointService.updateEndpoint(id, data);
+    update: async (id: string, endpointData: any): Promise<EndpointResponse> => {
+      validateApiUrl();
+      if (endpointData.environment) {
+        endpointData.environment = String(endpointData.environment).trim().toLowerCase();
+      }
+      const response = await fetch(`${API_BASE_URL}/api/endpoints/${id}`, {
+        ...defaultFetchOptions,
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(endpointData)
+      });
+      return handleResponse<EndpointResponse>(response);
     },
 
     delete: async (id: string): Promise<void> => {
-      return endpointService.deleteEndpoint(id);
+      validateApiUrl();
+      const response = await fetch(`${API_BASE_URL}/api/endpoints/${id}`, {
+        ...defaultFetchOptions,
+        method: 'DELETE',
+        headers: getAuthHeaders()
+      });
+      return handleResponse<void>(response, 'void');
     },
 
-    ping: async (id: string): Promise<void> => {
-      // Use testConnection instead since pingEndpoint doesn't exist
-      await endpointService.testConnection(id);
-      return;
-    },
+    testConnection: async (url: string, method: string = 'GET'): Promise<{ success: boolean; message: string; responseTime?: number }> => {
+      try {
+        const startTime = Date.now();
+        const response = await fetch(url, {
+          method,
+          mode: 'no-cors',
+          cache: 'no-cache',
+          headers: {
+            'Accept': 'application/json'
+          },
+          redirect: 'follow',
+          referrerPolicy: 'no-referrer'
+        });
+        const endTime = Date.now();
+        const responseTime = endTime - startTime;
+
+        return {
+          success: response.status >= 200 && response.status < 300,
+          message: `Connection ${response.status >= 200 && response.status < 300 ? 'successful' : 'failed'} (${response.status} ${response.statusText})`,
+          responseTime
+        };
+      } catch (error) {
+        return {
+          success: false,
+          message: error instanceof Error ? error.message : 'Unknown error occurred during connection test'
+        };
+      }
+    }
   },
 
   // Services endpoints

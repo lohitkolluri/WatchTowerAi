@@ -39,7 +39,8 @@ import {
   CheckCheck
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { Log, logsService } from '@/services/logsService';
+import { Log } from '@/types/common';
+import { api } from '@/lib/api';
 import { useToast } from '@/components/ui/use-toast';
 import MainLayout from '@/components/layouts/main-layout';
 import { Calendar as CalendarType } from '@/components/ui/calendar';
@@ -240,18 +241,15 @@ export default function LogsPage() {
   const fetchLogs = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await logsService.getLogs();
-
-      if (!response || !Array.isArray(response.logs)) {
-        throw new Error('Invalid response format');
-      }
+      const response = await api.logs.getAll();
 
       // Sort logs by timestamp in descending order (newest first)
-      const sortedLogs = response.logs.sort((a, b) =>
+      const sortedLogs = response.data.sort((a, b) =>
         new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
       );
 
       setAllLogs(sortedLogs);
+      setTotal(response.total);
     } catch (error) {
       console.error('Error fetching logs:', error);
       toast({
@@ -351,7 +349,7 @@ export default function LogsPage() {
     if (!confirm('Are you sure you want to clear all logs?')) return;
 
     try {
-      await logsService.clearLogs();
+      await api.logs.clear();
       toast({
         title: 'Success',
         description: 'All logs have been cleared.',
@@ -691,20 +689,20 @@ export default function LogsPage() {
               ) : (
                 <div className="relative overflow-hidden">
                   <div className="max-h-[60vh] overflow-auto custom-scrollbar">
-                    <table className="w-full border-collapse resizable-table">
+                    <table className="w-full border-collapse">
                       <thead className="sticky top-0 z-10">
-                        <tr className="bg-muted/70 backdrop-blur-sm border-b text-sm">
-                          <th className="py-3 px-4 text-left font-semibold resizable">Timestamp</th>
+                        <tr className="bg-muted/70 backdrop-blur-sm text-sm">
+                          <th className="py-3 px-4 text-left font-semibold resizable first:rounded-tl-lg">Timestamp</th>
                           <th className="py-3 px-4 text-left font-semibold w-24 resizable">Level</th>
                           <th className="py-3 px-4 text-left font-semibold resizable">Service</th>
-                          <th className="py-3 px-4 text-left font-semibold resizable">Message</th>
+                          <th className="py-3 px-4 text-left font-semibold resizable last:rounded-tr-lg">Message</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y">
+                      <tbody className="divide-y divide-border/50">
                         {getPaginatedLogs().map((log: Log, index: number) => (
                           <tr
                             key={`${log.timestamp}-${index}`}
-                            className="group hover:bg-muted/50 transition-colors duration-200 cursor-pointer border-l-4 border-transparent hover:border-l-primary/70 hover:shadow-sm"
+                            className="group hover:bg-muted/50 transition-colors duration-200 cursor-pointer border-l-2 border-transparent hover:border-l-primary/70"
                             onClick={() => {
                               setSelectedLog(log);
                               setIsDialogOpen(true);
