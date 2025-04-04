@@ -1,324 +1,281 @@
-# 🚨 WatchTowerAI
-
-<div align="center">
-  <img src="public/logo.png" alt="WatchTowerAI Logo" width="200" height="200"/>
-
-  <h1>AI-Powered API Monitoring & Alerting Platform</h1>
-
-  [![Next.js 15](https://img.shields.io/badge/Next.js-15.2.4-black?style=for-the-badge&logo=next.js)](https://nextjs.org)
-  [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com)
-  [![MongoDB](https://img.shields.io/badge/MongoDB-Latest-47A248?style=for-the-badge&logo=mongodb)](https://www.mongodb.com)
-  [![TypeScript](https://img.shields.io/badge/TypeScript-5.8.2-3178C6?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org)
-  [![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=for-the-badge&logo=python)](https://www.python.org)
-  [![Gemini AI](https://img.shields.io/badge/Gemini_AI-Latest-4285F4?style=for-the-badge&logo=google)](https://deepmind.google/technologies/gemini/)
-  [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4.17-38B2AC?style=for-the-badge&logo=tailwind-css)](https://tailwindcss.com)
-  [![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
-
-  <p align="center">
-    <a href="#-features">Features</a> •
-    <a href="#-architecture">Architecture</a> •
-    <a href="#-installation">Installation</a> •
-    <a href="#-documentation">Documentation</a> •
-    <a href="#-contributing">Contributing</a>
-  </p>
-</div>
-
-## 🌟 Features
+# 🚨 WatchTowerAI - AI-Powered API Monitoring Platform
 
 <div align="center">
 
-### Core Capabilities
+![Next.js](https://img.shields.io/badge/Next.js-000000?style=for-the-badge&logo=next.js)
+![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
+![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript)
+![TailwindCSS](https://img.shields.io/badge/TailwindCSS-38B2AC?style=for-the-badge&logo=tailwind-css)
+![Gemini AI](https://img.shields.io/badge/Gemini_AI-Red?style=for-the-badge)
 
-| Feature | Description |
-|---------|-------------|
-| 🤖 AI Analysis | Real-time log analysis using Google Gemini AI |
-| 🔍 Universal Monitoring | Automated monitoring for any API endpoint |
-| ⚡ Real-time Alerts | Instant notifications with AI remediation |
-| 📊 Advanced Analytics | Comprehensive metrics and visualization |
-| 🔎 Smart Search | Advanced log querying and filtering |
-| 📨 Email Alerts | Beautiful HTML email notifications |
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Code Style: ESLint](https://img.shields.io/badge/code%20style-ESLint-4B32C3.svg)](https://eslint.org/)
+[![TypeScript Strict](https://img.shields.io/badge/TypeScript-Strict-3178C6.svg)](https://www.typescriptlang.org/tsconfig#strict)
 
 </div>
 
-## 🏗️ Architecture
+## 📖 Overview
+
+WatchTowerAI is a comprehensive, AI-powered API monitoring and alerting platform that combines a modern Next.js frontend with a robust FastAPI backend. The platform provides real-time monitoring, anomaly detection, and intelligent alerting for API endpoints, powered by Google's Gemini AI for advanced analysis and remediation suggestions.
+
+<div align="center">
 
 ```mermaid
-graph TB
-    subgraph Frontend [Frontend Layer]
-        A[Next.js App] --> B[React Components]
-        B --> C[TanStack Query]
-        B --> D[Shadcn/UI]
-        B --> E[Tailwind CSS]
-    end
-
-    subgraph Backend [Backend Layer]
-        F[FastAPI] --> G[MongoDB]
-        F --> H[Gemini AI]
-        F --> I[Email Service]
-        F --> J[Log Processor]
-    end
-
-    subgraph Services [External Services]
-        K[Monitored APIs]
-        L[SMTP Server]
-        M[Database]
-    end
-
-    A --> F
-    K --> F
-    F --> L
-    G --> M
-
-    style Frontend fill:#f9f,stroke:#333,stroke-width:2px
-    style Backend fill:#bbf,stroke:#333,stroke-width:2px
-    style Services fill:#dfd,stroke:#333,stroke-width:2px
+graph TD
+    A[Frontend] -->|API Calls| B[Backend]
+    B -->|Store Data| C[MongoDB]
+    B -->|Analyze| D[Gemini AI]
+    B -->|Send Alerts| E[Email Service]
+    D -->|Suggestions| B
+    B -->|Metrics| A
 ```
 
-## 💻 Tech Stack
+</div>
 
-### Frontend Technologies
-```mermaid
-mindmap
-  root((Frontend))
-    Framework
-      Next.js 15.2.4
-      React 18
-    UI
-      Shadcn/UI
-      Tailwind CSS 3.4
-      Framer Motion
-    State Management
-      TanStack Query
-      React Hook Form
-    Data Visualization
-      Recharts
-    Development
-      TypeScript 5.8.2
-      ESLint
-      Prettier
-```
+## 🌟 Key Features
 
-### Backend Technologies
-```mermaid
-mindmap
-  root((Backend))
-    Framework
-      FastAPI
-      Pydantic v2
-    Database
-      MongoDB
-      Motor AsyncIO
-    AI Integration
-      Google Gemini
-    Email
-      SMTP
-      Jinja2 Templates
-    Logging
-      Loguru
-```
+- **Universal API Monitoring**: Monitor any API endpoint with real-time performance tracking
+- **AI-Powered Analysis**: Gemini AI integration for intelligent log analysis and anomaly detection
+- **Real-time Alerting**: Instant notifications with actionable AI-generated suggestions
+- **Modern Dashboard**: Beautiful, responsive UI with real-time metrics and analytics
+- **Advanced Log Management**: Powerful search and filtering capabilities
+- **Email Notifications**: Structured, formatted alerts with remediation steps
+- **Comprehensive Metrics**: Real-time and historical performance analytics
+
+## 🔧 Tech Stack
+
+### Frontend
+- **Framework**: Next.js 15 with App Router
+- **Language**: TypeScript
+- **Styling**: TailwindCSS with custom components
+- **State Management**: React Query
+- **UI Components**: Radix UI + Custom Components
+- **Form Handling**: React Hook Form + Zod
+- **Charts**: Recharts
+- **Animations**: Framer Motion
+
+### Backend
+- **Framework**: FastAPI
+- **Database**: MongoDB with Motor (AsyncIO)
+- **AI Integration**: Google Gemini API
+- **Email Service**: SMTP via aiosmtplib
+- **Logging**: Loguru
+- **Data Validation**: Pydantic v2
 
 ## 📂 Project Structure
 
-<details>
-<summary>Click to expand project structure</summary>
-
+### Backend Structure
 ```plaintext
-WatchTowerAI/
-├── Frontend/
-│   ├── src/
-│   │   ├── app/              # Next.js pages
-│   │   ├── components/       # React components
-│   │   ├── lib/             # Utilities
-│   │   └── styles/          # Global styles
-│   ├── public/              # Static assets
-│   ├── tailwind.config.js   # Tailwind configuration
-│   ├── next.config.js       # Next.js configuration
-│   └── package.json         # Dependencies
-│
-├── Backend/
-│   ├── app/
-│   │   ├── services/
-│   │   │   ├── email_alert.py
-│   │   │   ├── gemini.py
-│   │   │   ├── log_classifier.py
-│   │   │   └── log_processor.py
-│   │   ├── config.py
-│   │   ├── database.py
-│   │   ├── main.py
-│   │   ├── models.py
-│   │   └── schemas.py
-│   ├── email_templates/
-│   └── requirements.txt
+Backend/
+├── app/
+│   ├── services/              # Core business logic services
+│   │   ├── email_alert.py     # Email notification service
+│   │   ├── gemini.py          # Gemini AI integration
+│   │   ├── log_classifier.py  # AI-powered log classification
+│   │   └── log_processor.py   # Log processing logic
+│   ├── config.py              # Configuration management
+│   ├── database.py            # MongoDB connection setup
+│   ├── main.py                # FastAPI application entry
+│   ├── models.py              # Database models
+│   └── schemas.py             # Pydantic validation schemas
+├── email_templates/           # Email notification templates
+│   ├── alert_email.html       # Alert notification template
+│   └── notification_email.html # General notification template
+├── .env                       # Environment variables
+├── .env.example               # Environment variables template
+└── requirements.txt           # Python dependencies
 ```
 
-</details>
+### Frontend Structure
+```plaintext
+Frontend/
+├── src/
+│   ├── app/                   # Next.js app router pages
+│   │   ├── alerts/           # Alerts management page
+│   │   ├── analytics/        # Analytics dashboard
+│   │   ├── api/              # API routes
+│   │   ├── dashboard/        # Main dashboard
+│   │   ├── endpoints/        # Endpoint management
+│   │   ├── logs/            # Log viewer
+│   │   ├── services/        # Services management
+│   │   └── settings/        # Application settings
+│   ├── components/           # Reusable UI components
+│   │   ├── endpoints/       # Endpoint-related components
+│   │   ├── layouts/         # Layout components
+│   │   ├── services/        # Service-related components
+│   │   └── ui/              # Base UI components (Radix UI)
+│   ├── lib/                  # Utility functions
+│   │   ├── api.ts           # API client
+│   │   ├── environments.ts  # Environment config
+│   │   └── utils.ts         # Helper functions
+│   ├── services/            # Frontend services
+│   │   ├── serviceService.ts # Service management
+│   │   └── settingsService.ts # Settings management
+│   └── types/               # TypeScript type definitions
+├── public/                  # Static assets
+│   ├── favicon.ico
+│   ├── image.png
+│   ├── logo.png
+│   └── manifest.json
+├── .env.development         # Development environment
+├── .env.production          # Production environment
+├── components.json          # UI components configuration
+├── next.config.js           # Next.js configuration
+├── tailwind.config.js       # Tailwind CSS configuration
+└── tsconfig.json            # TypeScript configuration
+```
 
-## 🚀 Installation
+### Key Components
+
+#### Backend Services
+- **Email Alert Service**: Handles email notifications with customizable templates
+- **Gemini AI Service**: Integrates with Google's Gemini AI for log analysis
+- **Log Classifier**: AI-powered log classification and entity extraction
+- **Log Processor**: Processes and stores log data efficiently
+
+#### Frontend Pages
+- **Dashboard**: Main overview with real-time metrics
+- **Alerts**: Alert management and monitoring
+- **Analytics**: Performance analytics and trends
+- **Endpoints**: API endpoint management
+- **Logs**: Log viewer with advanced filtering
+- **Services**: Service management interface
+- **Settings**: Application configuration
+
+#### UI Components
+- **Radix UI Components**: Accessible base components
+- **Custom Components**: Project-specific UI elements
+- **Layout Components**: Page layouts and navigation
+- **Service Components**: Service-specific UI elements
+
+## 🚀 Getting Started
 
 ### Prerequisites
 
+- Node.js 18+ and npm/bun
 - Python 3.9+
-- Node.js 18+
 - MongoDB
-- SMTP Server
-- Google Gemini API Key
+- Google Gemini API key
+- SMTP server credentials
 
-### Backend Setup
+### Installation
 
-```bash
-# Clone repository
-git clone https://github.com/lohitkolluri/WatchTowerAi
-cd WatchTowerAi/Backend
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/lohitkolluri/WatchTowerAi
+   cd WatchTowerAi
+   ```
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# or
-.\venv\Scripts\activate  # Windows
+2. **Setup Frontend**
+   ```bash
+   cd Frontend
+   npm install
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
 
-# Install dependencies
-pip install -r requirements.txt
+3. **Setup Backend**
+   ```bash
+   cd Backend
+   python -m venv venv
+   source venv/bin/activate  # or `venv\Scripts\activate` on Windows
+   pip install -r requirements.txt
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
 
-# Configure environment
-cp .env.example .env
-# Edit .env with your configurations
+4. **Start Development Servers**
+   ```bash
+   # Terminal 1 - Backend
+   cd Backend
+   uvicorn app.main:app --reload
 
-# Start server
-uvicorn app.main:app --reload
-```
-
-### Frontend Setup
-
-```bash
-cd ../Frontend
-
-# Install dependencies
-npm install
-
-# Configure environment
-cp .env.development .env.local
-
-# Start development server
-npm run dev
-```
+   # Terminal 2 - Frontend
+   cd Frontend
+   npm run dev
+   ```
 
 ## 📡 API Documentation
 
 ### Core Endpoints
 
-| Method | Endpoint | Description | Authentication |
-|--------|----------|-------------|----------------|
-| POST | `/ingest` | Log ingestion | API Key |
-| GET | `/logs` | Retrieve logs | API Key |
-| GET | `/alerts` | List alerts | Bearer Token |
-| PATCH | `/alerts/{id}` | Update alert | Bearer Token |
-| GET | `/metrics` | Service metrics | API Key |
-| POST | `/monitor/api` | Register API | API Key |
-| GET | `/health` | Health check | None |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/ingest` | Ingest new log data |
+| `GET` | `/api/logs` | Retrieve filtered logs |
+| `GET` | `/api/alerts` | Get active alerts |
+| `PATCH` | `/api/alerts/{id}` | Update alert status |
+| `GET` | `/api/metrics` | Get service metrics |
+| `POST` | `/api/monitor` | Add new API endpoint to monitor |
 
-## 🔐 Security
+### Authentication
 
-### Authentication Methods
+The API supports two authentication methods:
+1. **API Key**: Include in `X-API-Key` header
+2. **OAuth2**: Token-based authentication via `/token` endpoint
 
-- **API Key Authentication**
-  - Header: `X-API-Key`
-  - Used for: Metrics, Log ingestion
+## 🎯 Features in Detail
 
-- **Bearer Token Authentication**
-  - Header: `Authorization`
-  - Used for: Alert management
+### AI-Powered Monitoring
+- Real-time anomaly detection using Gemini AI
+- Automatic log classification and entity extraction
+- Intelligent alert prioritization
+- AI-generated remediation suggestions
 
-### Environment Configuration
+### Dashboard Features
+- Real-time metrics visualization
+- Interactive log filtering and search
+- Alert management interface
+- Performance trend analysis
+- Customizable monitoring rules
 
-```env
-# Backend (.env)
-API_KEY=your_api_key
-AUTH_TOKEN=your_auth_token
+### Alert System
+- Configurable alert thresholds
+- Multiple notification channels
+- Alert acknowledgment workflow
+- Historical alert tracking
+- Custom alert templates
 
-# Frontend (.env.local)
-NEXT_PUBLIC_API_KEY=your_api_key
-NEXT_PUBLIC_AUTH_TOKEN=your_auth_token
-```
+### Data Management
+- Efficient log storage and retrieval
+- Automatic data retention policies
+- Export capabilities
+- Backup and restore functionality
 
-## 📈 Performance Features
+## 🛡️ Security Features
 
-### Frontend Optimization
-- Code splitting via Next.js
-- Image optimization
-- Tailwind CSS purging
-- React Query caching
-- Lazy loading components
-
-### Backend Optimization
-- Asynchronous operations
-- Connection pooling
-- Response caching
+- API key authentication
+- OAuth2 support
 - Rate limiting
-- Background tasks
+- Input validation
+- CORS protection
+- Secure headers
+- Environment-based configuration
 
-## 🧪 Testing
-
-### Frontend Testing
-- Jest for unit tests
-- React Testing Library
-- Cypress for E2E
-- Lighthouse for performance
-
-### Backend Testing
-- PyTest for unit tests
-- AsyncIO testing
-- Integration tests
-- Load testing
-
-## 📱 Responsive Design
-
-- Mobile-first approach
-- Breakpoint optimization
-- Touch-friendly interfaces
-- Progressive enhancement
-- Flexible layouts
-
-## 🎨 Theme Support
-
-- Light/Dark modes
-- Custom color schemes
-- Consistent UI components
-- Accessible design
-- RTL support
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create your feature branch
-   ```bash
-   git checkout -b feature/AmazingFeature
-   ```
-3. Commit your changes
-   ```bash
-   git commit -m 'Add some AmazingFeature'
-   ```
-4. Push to the branch
-   ```bash
-   git push origin feature/AmazingFeature
-   ```
-5. Open a Pull Request
-
-## 📃 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 👨‍💻 Author
-
-**Lohit Kolluri**
-- Email: [me@lohit.is-a.dev](mailto:me@lohit.is-a.dev)
-- GitHub: [@lohitkolluri](https://github.com/lohitkolluri)
-
----
+## 📈 Performance
 
 <div align="center">
 
-### ⭐ Star us on GitHub — it motivates us a lot!
-
-Made with ❤️ by [Lohit Kolluri](https://github.com/lohitkolluri)
+```mermaid
+graph LR
+    A[Request] --> B[Load Balancer]
+    B --> C[API Server]
+    C --> D[Cache]
+    C --> E[Database]
+    D --> F[Response]
+    E --> F
+```
 
 </div>
+
+- Asynchronous processing
+- Caching layer
+- Connection pooling
+- Optimized database queries
+- Efficient log storage
+- Background task processing
+
+## 📝 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
