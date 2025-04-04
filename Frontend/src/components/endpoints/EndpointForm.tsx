@@ -29,7 +29,7 @@ export default function EndpointForm({
     url: '',
     method: 'GET',
     service: '',
-    environment: 'production',
+    environment: '',
     description: ''
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -46,7 +46,7 @@ export default function EndpointForm({
         url: initialData.url || '',
         method: initialData.method || 'GET',
         service: initialData.service || '',
-        environment: normalizeEnvironment(initialData.environment),
+        environment: initialData.environment || '',
         description: initialData.description || ''
       });
     }
@@ -111,7 +111,7 @@ export default function EndpointForm({
         url: formData.url.trim(),
         method: formData.method,
         service: formData.service.trim(),
-        environment: normalizeEnvironment(formData.environment),
+        environment: formData.environment,
         description: formData.description.trim() || undefined
       };
 
@@ -130,7 +130,7 @@ export default function EndpointForm({
           url: '',
           method: 'GET',
           service: '',
-          environment: 'production',
+          environment: '',
           description: ''
         });
       }

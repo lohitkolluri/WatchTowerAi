@@ -155,7 +155,7 @@ export default function AlertsPage() {
       service: alert.service_name,
       environment: normalizeEnvironment(alert.environment),
       severity: alert.level,
-      status: alert.status,
+      status: alert.status || (alert.acknowledged ? 'acknowledged' : 'active'),
       timestamp: new Date(alert.timestamp),
       acknowledged: alert.acknowledged,
       description: alert.description,
@@ -203,15 +203,8 @@ export default function AlertsPage() {
   useEffect(() => {
     const filtered = applyFilters(allAlerts, filters);
 
-    const sortedAlerts = filtered.sort((a, b) => {
-      const statusPriority = { active: 3, acknowledged: 2, resolved: 1 };
-      const statusDiff = (statusPriority[b.status as keyof typeof statusPriority] || 0) -
-        (statusPriority[a.status as keyof typeof statusPriority] || 0);
-
-      if (statusDiff !== 0) return statusDiff;
-
-      return b.timestamp.getTime() - a.timestamp.getTime();
-    });
+    // Sort alerts purely by timestamp (newest first)
+    const sortedAlerts = filtered.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
 
     setFilteredAlerts(sortedAlerts);
 
@@ -235,15 +228,8 @@ export default function AlertsPage() {
 
       const formattedAlerts = formatAlerts(alertsData.data);
 
-      const sortedAlerts = formattedAlerts.sort((a, b) => {
-        const statusPriority = { active: 3, acknowledged: 2, resolved: 1 };
-        const statusDiff = (statusPriority[b.status as keyof typeof statusPriority] || 0) -
-          (statusPriority[a.status as keyof typeof statusPriority] || 0);
-
-        if (statusDiff !== 0) return statusDiff;
-
-        return b.timestamp.getTime() - a.timestamp.getTime();
-      });
+      // Sort alerts purely by timestamp (newest first)
+      const sortedAlerts = formattedAlerts.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
 
       setAllAlerts(sortedAlerts);
 
@@ -372,6 +358,39 @@ export default function AlertsPage() {
   }, [filteredAlerts, pagination.page, pagination.limit]);
 
   const displayedAlerts = getPaginatedAlerts();
+
+  const handleAcknowledge = async (alertId: string) => {
+    try {
+      await api.alerts.acknowledge(alertId);
+
+      // Update both allAlerts and filteredAlerts states
+      setAllAlerts(prevAlerts => prevAlerts.map(alert => {
+        if (alert.id === alertId) {
+          return {
+            ...alert,
+            acknowledged: true,
+            status: 'acknowledged'  // Use the status from the backend
+          };
+        }
+        return alert;
+      }));
+
+      // Update the selected alert if it's the one being acknowledged
+      if (selectedAlert?.id === alertId) {
+        setSelectedAlert(prev => prev ? {
+          ...prev,
+          acknowledged: true,
+          status: 'acknowledged'  // Use the status from the backend
+        } : null);
+      }
+
+      toast.success("Alert acknowledged successfully");
+      setSelectedAlert(null);
+    } catch (error) {
+      console.error("Failed to acknowledge alert:", error);
+      toast.error("Failed to acknowledge alert");
+    }
+  };
 
   return (
     <MainLayout>
@@ -554,7 +573,10 @@ export default function AlertsPage() {
                           variant="ghost"
                           size="icon"
                           className="h-4 w-4 ml-1 hover:bg-transparent"
-                          onClick={() => handleFilterChange(key as keyof AlertFilters, 'all')}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            handleFilterChange(key as keyof AlertFilters, 'all');
+                          }}
                         >
                           <X className="h-3 w-3" />
                         </Button>
@@ -723,7 +745,13 @@ export default function AlertsPage() {
       </div>
 
       <Dialog open={isConfigOpen} onOpenChange={setIsConfigOpen}>
-        <DialogContent className="sm:max-w-md animate-in fade-in-50 slide-in-from-top-5 duration-300 shadow-xl border">
+        <DialogContent
+          className="sm:max-w-md animate-in fade-in-50 slide-in-from-top-5 duration-300 shadow-xl border"
+          aria-describedby="smtp-config-description"
+        >
+          <div id="smtp-config-description" className="sr-only">
+            Configure SMTP settings for email notifications
+          </div>
           <DialogHeader>
             <DialogTitle className="text-xl">Configure Email Notifications</DialogTitle>
             <DialogDescription>
@@ -858,7 +886,13 @@ export default function AlertsPage() {
       </Dialog>
 
       <Dialog open={!!selectedAlert} onOpenChange={(open) => !open && setSelectedAlert(null)}>
-        <DialogContent className="sm:max-w-2xl max-h-[90vh] animate-in fade-in-50 zoom-in-95 duration-300 shadow-xl">
+        <DialogContent
+          className="sm:max-w-2xl max-h-[90vh] animate-in fade-in-50 zoom-in-95 duration-300 shadow-xl"
+          aria-describedby="alert-dialog-description"
+        >
+          <div id="alert-dialog-description" className="sr-only">
+            Alert details and actions for {selectedAlert?.title}
+          </div>
           {selectedAlert && (
             <>
               <div className="flex flex-col space-y-1 mb-4">
@@ -954,15 +988,26 @@ export default function AlertsPage() {
                 </div>
               </div>
 
-              <div className="pt-4 flex justify-end gap-2">
+              <DialogFooter className="flex justify-between items-center gap-2 pt-6">
+                <div className="flex items-center gap-2">
+                  {!selectedAlert.acknowledged && selectedAlert.status !== "resolved" && (
+                    <Button
+                      variant="outline"
+                      onClick={() => handleAcknowledge(selectedAlert.id)}
+                      className="hover:shadow-md transition-all duration-200"
+                    >
+                      <CheckCircle className="h-4 w-4 mr-2" />
+                      Acknowledge
+                    </Button>
+                  )}
+                </div>
                 <Button
                   variant="outline"
                   onClick={() => setSelectedAlert(null)}
-                  className="hover:shadow-md transition-all duration-150"
                 >
                   Close
                 </Button>
-              </div>
+              </DialogFooter>
             </>
           )}
         </DialogContent>

@@ -3,7 +3,7 @@
 import { EndpointModal } from "@/components/endpoints/EndpointModal";
 import MainLayout from "@/components/layouts/main-layout";
 import { formatDate } from "@/lib/utils";
-import { endpointService } from "@/services/endpointService";
+import { api } from "@/lib/api";
 import { AlertTriangle, Check, ExternalLink, Plus, RefreshCw, Search, Trash2, X, Settings, Filter, AlertCircle, Clock as ClockIcon, Lock, Edit, MoreVertical, PlusCircle, Settings2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import React, { useEffect, useState, useCallback, useMemo } from "react";
@@ -84,6 +84,7 @@ interface MonitoringState {
   isActive: boolean;
   intervalId?: NodeJS.Timeout;
   hasError: boolean;
+  errorMessage: string;
 }
 
 // Load initial monitoring state from localStorage
@@ -100,7 +101,8 @@ const loadMonitoringState = () => {
           state[id] = {
             isActive: (value as any).isActive || false,
             hasError: (value as any).hasError || false,
-            intervalId: undefined // We'll recreate intervals for active monitors
+            intervalId: undefined, // We'll recreate intervals for active monitors
+            errorMessage: (value as any).errorMessage || ''
           };
         }
       });
@@ -262,7 +264,7 @@ export default function EndpointsPage() {
       }
       setError(null);
 
-      const response = await endpointService.getAllEndpoints();
+      const response = await api.endpoints.getAll();
 
       // Format endpoint data with normalized environments
       const formattedEndpoints = response
@@ -317,7 +319,7 @@ export default function EndpointsPage() {
         return false;
       }
 
-      await endpointService.pingEndpoint(id);
+      await api.endpoints.testConnection(url);
       setMonitoringState(prev => ({
         ...prev,
         [id]: {
@@ -501,11 +503,11 @@ export default function EndpointsPage() {
         method: formData.method || "GET",
         service: formData.service,
         description: formData.description || `Endpoint for ${formData.service}`,
-        environment: formData.environment || "production"
+        environment: formData.environment
       };
 
       // Register the endpoint
-      const newEndpoint = await endpointService.createEndpoint(endpointData);
+      const newEndpoint = await api.endpoints.create(endpointData);
       console.log("Created endpoint:", newEndpoint);
 
       // Show success message
@@ -518,7 +520,7 @@ export default function EndpointsPage() {
           name: newEndpoint.endpoint.name,
           url: newEndpoint.endpoint.url,
           service: newEndpoint.endpoint.service,
-          environment: normalizeEnvironment(newEndpoint.endpoint.environment),
+          environment: newEndpoint.endpoint.environment,
           status: newEndpoint.endpoint.status || "active",
           lastChecked: new Date()
         };
@@ -538,26 +540,26 @@ export default function EndpointsPage() {
       // Close the modal
       setShowRegisterModal(false);
 
-      // Start monitoring the new endpoint after a short delay to ensure registration is complete
-      if (newEndpoint && newEndpoint.endpoint && newEndpoint.endpoint._id) {
-        setTimeout(() => {
-          // Set the specific endpoint to active state
-          setMonitoringState(prev => ({
-            ...prev,
-            [newEndpoint.endpoint._id]: {
-              ...prev[newEndpoint.endpoint._id],
-              isActive: true
-            }
-          }));
-
-          // Try to ping the endpoint
-          try {
-            endpointService.pingEndpoint(newEndpoint.endpoint._id);
-          } catch (error) {
-            console.error("Error pinging new endpoint:", error);
+      // Set up monitoring after a delay
+      setTimeout(async () => {
+        setMonitoringState(prev => ({
+          ...prev,
+          [newEndpoint.endpoint._id]: {
+            isActive: true,
+            lastChecked: new Date().toISOString(),
+            status: 'pending',
+            hasError: false,
+            errorMessage: ''
           }
-        }, 1000);
-      }
+        }));
+
+        // Test this endpoint connection immediately
+        try {
+          await api.endpoints.testConnection(newEndpoint.endpoint.url);
+        } catch (error) {
+          console.error("Error testing endpoint connection:", error);
+        }
+      }, 1000);
 
       return Promise.resolve();
     } catch (err: unknown) {
@@ -781,7 +783,7 @@ export default function EndpointsPage() {
     setDeleteError(null);
 
     try {
-      await endpointService.deleteEndpoint(endpointToDelete.id);
+      await api.endpoints.delete(endpointToDelete.id);
 
       // Stop monitoring if active
       stopMonitoring(endpointToDelete.id);
@@ -822,7 +824,7 @@ export default function EndpointsPage() {
         };
 
         // Call API to update endpoint
-        const result = await endpointService.updateEndpoint(selectedEndpoint.id, updateData);
+        const result = await api.endpoints.update(selectedEndpoint.id, updateData);
 
         if (result) {
           const newEndpoint = result.endpoint;
@@ -837,7 +839,7 @@ export default function EndpointsPage() {
                   name: formData.name,
                   url: formData.url,
                   service: formData.service,
-                  environment: normalizeEnvironment(formData.environment),
+                  environment: formData.environment,
                   status: ep.status
                 };
               }
@@ -852,11 +854,11 @@ export default function EndpointsPage() {
 
           // Start monitoring automatically if enabled
           if (newEndpoint && newEndpoint._id && monitoringState[newEndpoint._id]?.isActive) {
-            // Ping this endpoint immediately
+            // Test this endpoint connection immediately
             try {
-              await endpointService.pingEndpoint(newEndpoint._id);
+              await api.endpoints.testConnection(newEndpoint.url);
             } catch (error) {
-              console.error("Error pinging endpoint:", error);
+              console.error("Error testing endpoint connection:", error);
             }
           }
         }

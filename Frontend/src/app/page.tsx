@@ -17,6 +17,7 @@ import { DatabaseIcon } from "lucide-react";
 import { normalizeEnvironment, getEnvironmentLabel } from "@/lib/environments";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "sonner";
 
 const MainLayout = dynamic(() => import('@/components/layouts/main-layout'), { ssr: false });
 
@@ -158,83 +159,113 @@ const ErrorRatePieChart = ({ data, isLoading }: { data: EnvironmentErrorRate[], 
   return (
     <div style={{ width: '100%', height: '300px' }}>
       {isLoading ? (
-        <div className="flex items-center justify-center h-full">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <div className="flex flex-col space-y-4 w-full h-full">
+          <div className="flex items-center justify-center flex-1">
+            <div className="relative w-[160px] h-[160px]">
+              <Skeleton className="absolute inset-0 rounded-full" />
+              <Skeleton className="absolute inset-[30px] rounded-full bg-background" />
+            </div>
+          </div>
+          <div className="flex items-center justify-center gap-3 flex-wrap">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <Skeleton className="h-2.5 w-2.5 rounded-full" />
+                <Skeleton className="h-4 w-16" />
+              </div>
+            ))}
+          </div>
         </div>
       ) : (
-        <ResponsiveContainer width="100%" height="100%">
-          <RechartsPieChart>
-            <Pie
-              data={data}
-              cx="50%"
-              cy="50%"
-              innerRadius={60}
-              outerRadius={80}
-              paddingAngle={5}
-              dataKey="value"
-              startAngle={90}
-              endAngle={450}
-            >
-              {data.map((entry, index) => (
-                <Cell
-                  key={`cell-${index}`}
-                  fill={entry.color}
-                  stroke="rgba(255,255,255,0.2)"
-                  strokeWidth={2}
-                />
-              ))}
-            </Pie>
-            <Tooltip
-              content={({ active, payload }) => {
-                if (active && payload && payload.length) {
-                  const data = payload[0].payload;
-                  return (
-                    <div className="rounded-lg border bg-background/95 p-3 shadow-xl backdrop-blur supports-[backdrop-filter]:bg-background/60">
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <div className="h-3 w-3 rounded-full" style={{ backgroundColor: data.color }} />
-                          <span className="font-medium">{data.name}</span>
-                        </div>
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-[0.70rem] uppercase text-muted-foreground">Error Rate</span>
-                            <span className="font-mono font-medium" style={{ color: data.color }}>
-                              {data.value.toFixed(2)}%
-                            </span>
+        <>
+          <ResponsiveContainer width="100%" height="100%">
+            <RechartsPieChart>
+              <Pie
+                data={data}
+                cx="50%"
+                cy="50%"
+                innerRadius={60}
+                outerRadius={80}
+                paddingAngle={5}
+                dataKey="value"
+                startAngle={90}
+                endAngle={450}
+              >
+                {data.map((entry, index) => (
+                  <Cell
+                    key={`cell-${index}`}
+                    fill={entry.color}
+                    stroke="rgba(255,255,255,0.2)"
+                    strokeWidth={2}
+                  />
+                ))}
+              </Pie>
+              <Tooltip
+                content={({ active, payload }) => {
+                  if (active && payload && payload.length) {
+                    const data = payload[0].payload;
+                    return (
+                      <div className="rounded-lg border bg-background/95 p-3 shadow-xl backdrop-blur supports-[backdrop-filter]:bg-background/60">
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <div className="h-3 w-3 rounded-full" style={{ backgroundColor: data.color }} />
+                            <span className="font-medium">{data.name}</span>
                           </div>
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-[0.70rem] uppercase text-muted-foreground">Errors</span>
-                            <span className="font-mono text-muted-foreground">{data.errors.toLocaleString()}</span>
-                          </div>
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-[0.70rem] uppercase text-muted-foreground">Total Requests</span>
-                            <span className="font-mono text-muted-foreground">{data.total.toLocaleString()}</span>
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[0.70rem] uppercase text-muted-foreground">Error Rate</span>
+                              <span className="font-mono font-medium" style={{ color: data.color }}>
+                                {data.value.toFixed(2)}%
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[0.70rem] uppercase text-muted-foreground">Errors</span>
+                              <span className="font-mono text-muted-foreground">{data.errors.toLocaleString()}</span>
+                            </div>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[0.70rem] uppercase text-muted-foreground">Total Requests</span>
+                              <span className="font-mono text-muted-foreground">{data.total.toLocaleString()}</span>
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                }
-                return null;
-              }}
-            />
-          </RechartsPieChart>
-        </ResponsiveContainer>
+                    );
+                  }
+                  return null;
+                }}
+              />
+            </RechartsPieChart>
+          </ResponsiveContainer>
+          <div className="mt-4 flex items-center justify-center gap-3 flex-wrap">
+            {data.slice(0, 4).map((env) => (
+              <div key={env.name} className="flex items-center gap-2">
+                <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: env.color }} />
+                <span className="text-xs font-medium text-muted-foreground">{env.name}</span>
+              </div>
+            ))}
+            {data.length > 4 && (
+              <HoverCard>
+                <HoverCardTrigger asChild>
+                  <div className="flex items-center gap-2 cursor-help">
+                    <div className="h-2.5 w-2.5 rounded-full bg-muted" />
+                    <span className="text-xs font-medium text-muted-foreground">+{data.length - 4} more</span>
+                  </div>
+                </HoverCardTrigger>
+                <HoverCardContent className="w-auto">
+                  <div className="space-y-2">
+                    {data.slice(4, 9).map((env) => (
+                      <div key={env.name} className="flex items-center gap-2">
+                        <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: env.color }} />
+                        <span className="text-sm font-medium">{env.name}</span>
+                        <span className="text-xs text-muted-foreground ml-1">({env.value.toFixed(2)}%)</span>
+                      </div>
+                    ))}
+                  </div>
+                </HoverCardContent>
+              </HoverCard>
+            )}
+          </div>
+        </>
       )}
-      <div className="mt-4 flex items-center justify-center gap-3 flex-wrap">
-        {data.slice(0, 4).map((env) => (
-          <div key={env.name} className="flex items-center gap-2">
-            <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: env.color }} />
-            <span className="text-xs font-medium text-muted-foreground">{env.name}</span>
-          </div>
-        ))}
-        {data.length > 4 && (
-          <div className="flex items-center gap-2">
-            <div className="h-2.5 w-2.5 rounded-full bg-muted" />
-            <span className="text-xs font-medium text-muted-foreground">+{data.length - 4} more</span>
-          </div>
-        )}
-      </div>
     </div>
   );
 };
@@ -268,6 +299,28 @@ export default function Dashboard() {
       sum + (service.metrics?.uptime || 0), 0);
 
     return totalUptime / servicesWithUptime.length;
+  };
+
+  const handleAcknowledge = async (e: React.MouseEvent, alertId: string) => {
+    e.stopPropagation(); // Prevent triggering the parent click event
+    try {
+      await api.alerts.acknowledge(alertId);
+      // Update the local state
+      setActiveAlerts(prev => prev.map(alert => {
+        if (alert.id === alertId) {
+          return {
+            ...alert,
+            acknowledged: true,
+            status: 'acknowledged'
+          };
+        }
+        return alert;
+      }));
+      toast.success("Alert acknowledged successfully");
+    } catch (error) {
+      console.error("Failed to acknowledge alert:", error);
+      toast.error("Failed to acknowledge alert");
+    }
   };
 
   useEffect(() => {
@@ -837,18 +890,22 @@ export default function Dashboard() {
                             </Badge>
                           </div>
                         </div>
-                        <Badge
-                          variant="outline"
-                          className={`capitalize ${alert.severity === 'critical'
-                            ? 'border-red-200 text-red-600'
-                            : alert.severity === 'warning'
-                              ? 'border-amber-200 text-amber-600'
-                              : 'border-blue-200 text-blue-600'
-                            }`}
-                        >
-                          {alert.severity}
-                        </Badge>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity ml-2" />
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className={`h-7 px-2 ${alert.acknowledged
+                              ? 'text-muted-foreground hover:bg-muted/10 cursor-not-allowed opacity-50'
+                              : 'text-green-500 hover:bg-green-500/10 hover:text-green-600'
+                              }`}
+                            onClick={(e) => !alert.acknowledged && handleAcknowledge(e, alert.id)}
+                            disabled={alert.acknowledged}
+                            title={alert.acknowledged ? 'Alert acknowledged' : 'Acknowledge alert'}
+                          >
+                            <CheckCircle className="h-4 w-4" />
+                          </Button>
+                          <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity ml-2" />
+                        </div>
                       </div>
                     </div>
                   ))}
