@@ -1,88 +1,140 @@
-# 🎯 WatchTowerAI
+# 🚨 WatchTowerAI
 
 <div align="center">
+  <img src="public/logo.png" alt="WatchTowerAI Logo" width="200" height="200"/>
 
-![WatchTowerAI Logo](https://via.placeholder.com/150)
+  <h1>AI-Powered API Monitoring & Alerting Platform</h1>
 
-[![FastAPI](https://img.shields.io/badge/Backend-FastAPI-005571?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com)
-[![Next.js](https://img.shields.io/badge/Frontend-Next.js-black?style=for-the-badge&logo=next.js)](https://nextjs.org)
-[![MongoDB](https://img.shields.io/badge/Database-MongoDB-47A248?style=for-the-badge&logo=mongodb)](https://www.mongodb.com)
-[![TypeScript](https://img.shields.io/badge/Language-TypeScript-3178C6?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org)
-[![Python](https://img.shields.io/badge/Language-Python-3776AB?style=for-the-badge&logo=python)](https://www.python.org)
-[![Gemini AI](https://img.shields.io/badge/AI-Gemini-Red?style=for-the-badge&logo=google)](https://deepmind.google/technologies/gemini/)
+  [![Next.js 15](https://img.shields.io/badge/Next.js-15.2.4-black?style=for-the-badge&logo=next.js)](https://nextjs.org)
+  [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com)
+  [![MongoDB](https://img.shields.io/badge/MongoDB-Latest-47A248?style=for-the-badge&logo=mongodb)](https://www.mongodb.com)
+  [![TypeScript](https://img.shields.io/badge/TypeScript-5.8.2-3178C6?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org)
+  [![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=for-the-badge&logo=python)](https://www.python.org)
+  [![Gemini AI](https://img.shields.io/badge/Gemini_AI-Latest-4285F4?style=for-the-badge&logo=google)](https://deepmind.google/technologies/gemini/)
+  [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4.17-38B2AC?style=for-the-badge&logo=tailwind-css)](https://tailwindcss.com)
+  [![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 
-**An AI-powered API monitoring and alerting system with real-time insights and intelligent remediation**
-
-[Explore Demo](https://demo.watchtowerai.com) · [Report Bug](https://github.com/lohitkolluri/WatchTowerAi/issues) · [Request Feature](https://github.com/lohitkolluri/WatchTowerAi/issues)
-
+  <p align="center">
+    <a href="#-features">Features</a> •
+    <a href="#-architecture">Architecture</a> •
+    <a href="#-installation">Installation</a> •
+    <a href="#-documentation">Documentation</a> •
+    <a href="#-contributing">Contributing</a>
+  </p>
 </div>
-
----
 
 ## 🌟 Features
 
 <div align="center">
 
+### Core Capabilities
+
 | Feature | Description |
 |---------|-------------|
-| 🤖 AI-Powered Analysis | Real-time log analysis and classification using Google Gemini AI |
-| 🔍 Universal API Monitoring | Automated monitoring for any API endpoint |
-| ⚡ Real-time Alerts | Instant notifications with AI-generated remediation suggestions |
-| 📊 Advanced Analytics | Comprehensive metrics and performance tracking |
-| 🔎 Smart Log Search | Powerful querying with type, tags, and confidence filtering |
-| 📨 Email Notifications | Beautifully formatted HTML email alerts |
+| 🤖 AI Analysis | Real-time log analysis using Google Gemini AI |
+| 🔍 Universal Monitoring | Automated monitoring for any API endpoint |
+| ⚡ Real-time Alerts | Instant notifications with AI remediation |
+| 📊 Advanced Analytics | Comprehensive metrics and visualization |
+| 🔎 Smart Search | Advanced log querying and filtering |
+| 📨 Email Alerts | Beautiful HTML email notifications |
 
 </div>
-
----
 
 ## 🏗️ Architecture
 
 ```mermaid
 graph TB
-    A[API Endpoints] -->|Monitoring| B[WatchTowerAI Backend]
-    B -->|Store| C[MongoDB]
-    B -->|Analysis| D[Gemini AI]
-    B -->|Alerts| E[Email Service]
-    F[Frontend] -->|API Calls| B
-    F -->|Real-time Updates| G[User Interface]
-    
-    style A fill:#f9f,stroke:#333,stroke-width:2px
-    style B fill:#bbf,stroke:#333,stroke-width:2px
-    style C fill:#dfd,stroke:#333,stroke-width:2px
-    style D fill:#fdd,stroke:#333,stroke-width:2px
-    style E fill:#ddf,stroke:#333,stroke-width:2px
-    style F fill:#ffd,stroke:#333,stroke-width:2px
-    style G fill:#dff,stroke:#333,stroke-width:2px
+    subgraph Frontend [Frontend Layer]
+        A[Next.js App] --> B[React Components]
+        B --> C[TanStack Query]
+        B --> D[Shadcn/UI]
+        B --> E[Tailwind CSS]
+    end
+
+    subgraph Backend [Backend Layer]
+        F[FastAPI] --> G[MongoDB]
+        F --> H[Gemini AI]
+        F --> I[Email Service]
+        F --> J[Log Processor]
+    end
+
+    subgraph Services [External Services]
+        K[Monitored APIs]
+        L[SMTP Server]
+        M[Database]
+    end
+
+    A --> F
+    K --> F
+    F --> L
+    G --> M
+
+    style Frontend fill:#f9f,stroke:#333,stroke-width:2px
+    style Backend fill:#bbf,stroke:#333,stroke-width:2px
+    style Services fill:#dfd,stroke:#333,stroke-width:2px
 ```
 
----
+## 💻 Tech Stack
 
-## 🚀 Tech Stack
+### Frontend Technologies
+```mermaid
+mindmap
+  root((Frontend))
+    Framework
+      Next.js 15.2.4
+      React 18
+    UI
+      Shadcn/UI
+      Tailwind CSS 3.4
+      Framer Motion
+    State Management
+      TanStack Query
+      React Hook Form
+    Data Visualization
+      Recharts
+    Development
+      TypeScript 5.8.2
+      ESLint
+      Prettier
+```
 
-### Backend
-- **Framework:** FastAPI
-- **Database:** MongoDB with Motor (AsyncIO)
-- **AI Integration:** Google Gemini API
-- **Logging:** Loguru
-- **Email:** SMTP via aiosmtplib
-- **Validation:** Pydantic v2
-
-### Frontend
-- **Framework:** Next.js 15
-- **UI Components:** Radix UI
-- **Styling:** TailwindCSS
-- **State Management:** TanStack Query
-- **Charts:** Recharts
-- **Forms:** React Hook Form + Zod
-- **Animations:** Framer Motion
-
----
+### Backend Technologies
+```mermaid
+mindmap
+  root((Backend))
+    Framework
+      FastAPI
+      Pydantic v2
+    Database
+      MongoDB
+      Motor AsyncIO
+    AI Integration
+      Google Gemini
+    Email
+      SMTP
+      Jinja2 Templates
+    Logging
+      Loguru
+```
 
 ## 📂 Project Structure
 
+<details>
+<summary>Click to expand project structure</summary>
+
 ```plaintext
 WatchTowerAI/
+├── Frontend/
+│   ├── src/
+│   │   ├── app/              # Next.js pages
+│   │   ├── components/       # React components
+│   │   ├── lib/             # Utilities
+│   │   └── styles/          # Global styles
+│   ├── public/              # Static assets
+│   ├── tailwind.config.js   # Tailwind configuration
+│   ├── next.config.js       # Next.js configuration
+│   └── package.json         # Dependencies
+│
 ├── Backend/
 │   ├── app/
 │   │   ├── services/
@@ -97,21 +149,14 @@ WatchTowerAI/
 │   │   └── schemas.py
 │   ├── email_templates/
 │   └── requirements.txt
-│
-├── Frontend/
-    ├── src/
-    ├── public/
-    ├── components.json
-    ├── tailwind.config.js
-    ├── next.config.js
-    └── package.json
 ```
 
----
+</details>
 
-## 🛠️ Getting Started
+## 🚀 Installation
 
 ### Prerequisites
+
 - Python 3.9+
 - Node.js 18+
 - MongoDB
@@ -119,16 +164,17 @@ WatchTowerAI/
 - Google Gemini API Key
 
 ### Backend Setup
+
 ```bash
 # Clone repository
 git clone https://github.com/lohitkolluri/WatchTowerAi
 cd WatchTowerAi/Backend
 
-# Setup virtual environment
-python -m venv env
-source env/bin/activate  # Linux/Mac
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
 # or
-.\env\Scripts\activate  # Windows
+.\venv\Scripts\activate  # Windows
 
 # Install dependencies
 pip install -r requirements.txt
@@ -142,6 +188,7 @@ uvicorn app.main:app --reload
 ```
 
 ### Frontend Setup
+
 ```bash
 cd ../Frontend
 
@@ -150,80 +197,128 @@ npm install
 
 # Configure environment
 cp .env.development .env.local
-# Edit .env.local with your configurations
 
 # Start development server
 npm run dev
 ```
 
-Visit `http://localhost:3000` for the frontend and `http://localhost:8000/docs` for the API documentation.
+## 📡 API Documentation
 
----
+### Core Endpoints
 
-## 📡 API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/ingest` | Log ingestion endpoint |
-| GET | `/logs` | Retrieve and query logs |
-| GET | `/alerts` | List all alerts |
-| PATCH | `/alerts/{id}` | Update alert status |
-| GET | `/metrics` | Service metrics |
-| POST | `/monitor/api` | Register API for monitoring |
-| GET | `/health` | Health check endpoint |
-
----
+| Method | Endpoint | Description | Authentication |
+|--------|----------|-------------|----------------|
+| POST | `/ingest` | Log ingestion | API Key |
+| GET | `/logs` | Retrieve logs | API Key |
+| GET | `/alerts` | List alerts | Bearer Token |
+| PATCH | `/alerts/{id}` | Update alert | Bearer Token |
+| GET | `/metrics` | Service metrics | API Key |
+| POST | `/monitor/api` | Register API | API Key |
+| GET | `/health` | Health check | None |
 
 ## 🔐 Security
 
-- API Key Authentication
-- OAuth2 Support
-- Environment-based Configurations
-- Secure Email Templates
-- Rate Limiting
-- Input Validation
+### Authentication Methods
 
----
+- **API Key Authentication**
+  - Header: `X-API-Key`
+  - Used for: Metrics, Log ingestion
 
-## 📈 Performance
+- **Bearer Token Authentication**
+  - Header: `Authorization`
+  - Used for: Alert management
 
-- Asynchronous Operations
-- Efficient Database Queries
-- Optimized Frontend Bundles
-- Lazy Loading Components
-- Image Optimization
-- Response Caching
+### Environment Configuration
 
----
+```env
+# Backend (.env)
+API_KEY=your_api_key
+AUTH_TOKEN=your_auth_token
+
+# Frontend (.env.local)
+NEXT_PUBLIC_API_KEY=your_api_key
+NEXT_PUBLIC_AUTH_TOKEN=your_auth_token
+```
+
+## 📈 Performance Features
+
+### Frontend Optimization
+- Code splitting via Next.js
+- Image optimization
+- Tailwind CSS purging
+- React Query caching
+- Lazy loading components
+
+### Backend Optimization
+- Asynchronous operations
+- Connection pooling
+- Response caching
+- Rate limiting
+- Background tasks
+
+## 🧪 Testing
+
+### Frontend Testing
+- Jest for unit tests
+- React Testing Library
+- Cypress for E2E
+- Lighthouse for performance
+
+### Backend Testing
+- PyTest for unit tests
+- AsyncIO testing
+- Integration tests
+- Load testing
+
+## 📱 Responsive Design
+
+- Mobile-first approach
+- Breakpoint optimization
+- Touch-friendly interfaces
+- Progressive enhancement
+- Flexible layouts
+
+## 🎨 Theme Support
+
+- Light/Dark modes
+- Custom color schemes
+- Consistent UI components
+- Accessible design
+- RTL support
 
 ## 🤝 Contributing
 
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
+1. Fork the repository
+2. Create your feature branch
+   ```bash
+   git checkout -b feature/AmazingFeature
+   ```
+3. Commit your changes
+   ```bash
+   git commit -m 'Add some AmazingFeature'
+   ```
+4. Push to the branch
+   ```bash
+   git push origin feature/AmazingFeature
+   ```
 5. Open a Pull Request
-
----
 
 ## 📃 License
 
-Distributed under the MIT License. See `LICENSE` for more information.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
----
+## 👨‍💻 Author
 
-## 📞 Contact
-
-Lohit Kolluri - [me@lohit.is-a.dev](mailto:me@lohit.is-a.dev)
-
-Project Link: [https://github.com/lohitkolluri/WatchTowerAi](https://github.com/lohitkolluri/WatchTowerAi)
+**Lohit Kolluri**
+- Email: [me@lohit.is-a.dev](mailto:me@lohit.is-a.dev)
+- GitHub: [@lohitkolluri](https://github.com/lohitkolluri)
 
 ---
 
 <div align="center">
 
-Made with ❤️ by [Lohit Kolluri](https://github.com/lohitkolluri)
+### ⭐ Star us on GitHub — it motivates us a lot!
 
-⭐ Star us on GitHub — it motivates us a lot!
+Made with ❤️ by [Lohit Kolluri](https://github.com/lohitkolluri)
 
 </div>
