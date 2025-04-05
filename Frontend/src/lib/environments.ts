@@ -37,10 +37,19 @@ export function getEnvironmentLabel(value: string): string {
 }
 
 /**
+ * Check if we're running in the browser
+ */
+const isBrowser = typeof window !== 'undefined';
+
+/**
  * Load custom environments from localStorage
  * @returns Array of custom environment values
  */
 export function loadCustomEnvironments(): string[] {
+  if (!isBrowser) {
+    return [];
+  }
+
   try {
     const saved = localStorage.getItem('customEnvironments');
     if (saved) {
@@ -60,6 +69,10 @@ export function loadCustomEnvironments(): string[] {
  * @param environments Array of custom environment values to save
  */
 export function saveCustomEnvironments(environments: string[]): void {
+  if (!isBrowser) {
+    return;
+  }
+
   try {
     localStorage.setItem('customEnvironments', JSON.stringify(environments));
   } catch (e) {
@@ -164,11 +177,15 @@ export function normalizeEnvironment(environment: string | undefined): string {
  */
 export function useEnvironments(additionalEnvironments: string[] = []) {
   const [customEnvironments, setCustomEnvironments] = useState<string[]>([]);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   // Load custom environments on mount
   useEffect(() => {
-    setCustomEnvironments(loadCustomEnvironments());
-  }, []);
+    if (!isInitialized && isBrowser) {
+      setCustomEnvironments(loadCustomEnvironments());
+      setIsInitialized(true);
+    }
+  }, [isInitialized]);
 
   // Get all environments (standard + custom + additional)
   const allEnvironments = useMemo(() => {
@@ -193,6 +210,7 @@ export function useEnvironments(additionalEnvironments: string[] = []) {
     allEnvironments,
     addEnvironment,
     removeEnvironment,
-    setCustomEnvironments
+    setCustomEnvironments,
+    isInitialized
   };
 }

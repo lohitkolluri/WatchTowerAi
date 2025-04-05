@@ -1,4 +1,3 @@
-import { endpointService } from '@/services/endpointService';
 import {
   Service,
   ServiceResponse,
