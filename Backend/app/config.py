@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     API_KEY: str = os.getenv("API_KEY", "test_api_key")
     AUTH_TOKEN: str = os.getenv("AUTH_TOKEN", "demo_token_test")
 
+    # CORS Settings
+    CORS_ORIGINS: list[str] = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:3000,https://watchtowerai.onrender.com").split(",")]
+    CORS_ALLOW_CREDENTIALS: bool = os.getenv("CORS_ALLOW_CREDENTIALS", "true").lower() == "true"
+    CORS_ALLOW_METHODS: list[str] = [method.strip() for method in os.getenv("CORS_ALLOW_METHODS", "*").split(",")]
+    CORS_ALLOW_HEADERS: list[str] = [header.strip() for header in os.getenv("CORS_ALLOW_HEADERS", "*").split(",")]
+    CORS_EXPOSE_HEADERS: list[str] = [header.strip() for header in os.getenv("CORS_EXPOSE_HEADERS", "*").split(",")]
+
     # Gemini API
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 
