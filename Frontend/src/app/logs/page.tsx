@@ -51,6 +51,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import debounce from 'lodash/debounce';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Suspense } from 'react';
 
 // Dynamically import components that might cause SSR issues
 const Calendar = dynamic<React.ComponentProps<typeof CalendarType>>(() => import('@/components/ui/calendar').then(mod => mod.Calendar), {
@@ -128,7 +129,8 @@ const formatData = (data: unknown): FormattedMetadata[] | string => {
   }
 };
 
-export default function LogsPage() {
+// Create a new LogsPageContent component that contains all the existing logic
+function LogsPageContent() {
   const { toast } = useToast();
   const searchParams = useSearchParams();
 
@@ -1036,5 +1038,27 @@ export default function LogsPage() {
         </DialogContent>
       </Dialog>
     </MainLayout>
+  );
+}
+
+// Update the default export to include Suspense
+export default function LogsPage() {
+  return (
+    <Suspense fallback={
+      <div className="container mx-auto p-4">
+        <Card>
+          <CardHeader>
+            <CardTitle>Logs</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-center p-8">
+              <Loader2 className="h-8 w-8 animate-spin" />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    }>
+      <LogsPageContent />
+    </Suspense>
   );
 }

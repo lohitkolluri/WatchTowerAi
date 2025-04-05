@@ -1,34 +1,57 @@
+'use client';
+
+import { useCallback, useState } from 'react';
 import { normalizeEnvironment, getEnvironmentLabel } from "@/lib/environments";
+import { api } from '@/lib/api';
 
-const fetchDashboardData = useCallback(async () => {
-  setIsLoading(true);
-  setError(null);
-  try {
-    const [statusResponse, alertsResponse, endpointsResponse] = await Promise.all([
-      api.dashboard.getStatus(),
-      api.dashboard.getAlerts(),
-      api.dashboard.getEndpoints()
-    ]);
+export default function DashboardPage() {
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [dashboardData, setDashboardData] = useState<{
+    metrics: any[];
+    alerts: any[];
+    endpoints: any[];
+  }>({
+    metrics: [],
+    alerts: [],
+    endpoints: []
+  });
 
-    // Process endpoints and normalize environments
-    const processedEndpoints = endpointsResponse.map((endpoint: any) => ({
-      ...endpoint,
-      environment: normalizeEnvironment(endpoint.environment)
-    }));
+  const fetchDashboardData = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const [metricsResponse, alertsResponse] = await Promise.all([
+        api.metrics.getAll(),
+        api.alerts.getAll()
+      ]);
 
-    setDashboardData({
-      status: statusResponse,
-      alerts: alertsResponse,
-      endpoints: processedEndpoints
-    });
-  } catch (error) {
-    console.error("Error fetching dashboard data:", error);
-    setError("Failed to load dashboard data. Please try again later.");
-  } finally {
-    setIsLoading(false);
-  }
-}, []);
+      // Process metrics and normalize environments
+      const processedMetrics = metricsResponse.map((metric: any) => ({
+        ...metric,
+        environment: normalizeEnvironment(metric.environment)
+      }));
 
-<p className="text-sm text-muted-foreground">
-  {endpoint.service} ({getEnvironmentLabel(endpoint.environment)})
-</p>
+      setDashboardData({
+        metrics: processedMetrics,
+        alerts: alertsResponse.data,
+        endpoints: processedMetrics // Using metrics as endpoints since they contain service info
+      });
+    } catch (error) {
+      console.error("Error fetching dashboard data:", error);
+      setError("Failed to load dashboard data. Please try again later.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  return (
+    <div>
+      {dashboardData.endpoints.map((endpoint, index) => (
+        <p key={index} className="text-sm text-muted-foreground">
+          {endpoint.service} ({getEnvironmentLabel(endpoint.environment)})
+        </p>
+      ))}
+    </div>
+  );
+}
