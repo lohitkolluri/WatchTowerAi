@@ -15,7 +15,7 @@ import {
 
 // API service for WatchTowerAI
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://watchtowerai.onrender.com';
 
 // Log the API configuration in development
 if (process.env.NODE_ENV === 'development') {
@@ -143,6 +143,13 @@ const getAuthHeaders = (requireAuth: boolean = false) => {
     apiKey = process.env.NEXT_PUBLIC_API_KEY || 'test_api_key';
   }
 
+  // Debug logging for API key
+  console.debug('API Key source:', {
+    fromLocalStorage: !!window?.localStorage.getItem('NEXT_PUBLIC_API_KEY'),
+    fromEnv: !!process.env.NEXT_PUBLIC_API_KEY,
+    usingDefault: apiKey === 'test_api_key'
+  });
+
   headers['X-API-Key'] = apiKey;
 
   // Add OAuth token if authentication is required
@@ -158,6 +165,13 @@ const getAuthHeaders = (requireAuth: boolean = false) => {
       token = process.env.NEXT_PUBLIC_AUTH_TOKEN || 'demo_token_test';
     }
 
+    // Debug logging for auth token
+    console.debug('Auth Token source:', {
+      fromLocalStorage: !!window?.localStorage.getItem('auth_token'),
+      fromEnv: !!process.env.NEXT_PUBLIC_AUTH_TOKEN,
+      usingDefault: token === 'demo_token_test'
+    });
+
     // Ensure token is formatted correctly
     if (token && !token.startsWith('Bearer ')) {
       headers['Authorization'] = `Bearer ${token}`;
@@ -165,6 +179,15 @@ const getAuthHeaders = (requireAuth: boolean = false) => {
       headers['Authorization'] = token;
     }
   }
+
+  // Debug log final headers (with sensitive values redacted)
+  console.debug('Final request headers:', {
+    ...Object.keys(headers).reduce((acc, key) => {
+      acc[key] = key.toLowerCase().includes('key') || key.toLowerCase().includes('auth')
+        ? '[REDACTED]' : headers[key];
+      return acc;
+    }, {} as Record<string, string>)
+  });
 
   return headers;
 };
