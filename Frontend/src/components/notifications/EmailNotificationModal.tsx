@@ -1,27 +1,32 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import EndpointForm from "./EndpointForm";
+import { EmailNotificationForm } from "./EmailNotificationForm";
 
-interface EndpointModalProps {
+interface EmailNotificationModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (formData: Record<string, any>) => Promise<void>;
   initialData?: Record<string, any>;
 }
 
-export function EndpointModal({ isOpen, onClose, onSubmit, initialData }: EndpointModalProps) {
+export function EmailNotificationModal({
+  isOpen,
+  onClose,
+  onSubmit,
+  initialData,
+}: EmailNotificationModalProps) {
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-[600px] p-0">
         <DialogHeader className="px-8 py-6 border-b">
           <DialogTitle className="text-xl font-semibold tracking-tight">
-            {initialData ? 'Edit Endpoint' : 'Add New Endpoint'}
+            {initialData ? "Edit Email Notification" : "Configure Email Notification"}
           </DialogTitle>
         </DialogHeader>
         <div className="px-8 py-6">
-          <EndpointForm
+          <EmailNotificationForm
             onSubmit={onSubmit}
             onCancel={onClose}
-            initialData={initialData as { id?: string; name: string; url: string; method: string; service?: string; environment?: string; description?: string } | undefined}
+            initialData={initialData}
           />
         </div>
       </DialogContent>

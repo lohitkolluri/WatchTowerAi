@@ -756,21 +756,39 @@ export const api = {
 
   // Settings endpoints
   settings: {
-    getSMTP: async (): Promise<any> => {
-      const response = await fetch(`${API_BASE_URL}/settings/smtp`);
-      return handleResponse<any>(response, 'json');
+    getSMTP: async () => {
+      validateApiUrl();
+      try {
+        const response = await fetch(`${API_BASE_URL}/settings/smtp`, {
+          ...defaultFetchOptions,
+          method: 'GET',
+          headers: getAuthHeaders(true)
+        });
+        return handleResponse(response);
+      } catch (error) {
+        console.error('Error fetching SMTP settings:', error);
+        // Return default values if API fails
+        return {
+          host: "",
+          port: "",
+          username: "",
+          password: "",
+          from_email: "",
+          use_tls: true
+        };
+      }
     },
 
-    updateSMTP: async (smtpConfig: any): Promise<void> => {
+    updateSMTP: async (config: any) => {
+      validateApiUrl();
       const response = await fetch(`${API_BASE_URL}/settings/smtp`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(smtpConfig),
+        ...defaultFetchOptions,
+        method: 'POST',
+        headers: getAuthHeaders(true),
+        body: JSON.stringify(config)
       });
-      return handleResponse<void>(response, 'void');
-    },
+      return handleResponse(response, 'void');
+    }
   },
 
   // Health check

@@ -18,6 +18,8 @@ import { normalizeEnvironment, getEnvironmentLabel } from "@/lib/environments";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
+import { useRouter } from 'next/navigation';
+import authService from '@/services/authService';
 
 const MainLayout = dynamic(() => import('@/components/layouts/main-layout'), { ssr: false });
 
@@ -279,6 +281,7 @@ export default function Dashboard() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [environmentErrorRates, setEnvironmentErrorRates] = useState<EnvironmentErrorRate[]>([]);
+  const router = useRouter();
 
   // Add quick actions
   const quickActions: QuickAction[] = [
@@ -322,6 +325,31 @@ export default function Dashboard() {
       toast.error("Failed to acknowledge alert");
     }
   };
+
+  useEffect(() => {
+    // Check authentication and redirect if not authenticated
+    const checkAuth = async () => {
+      if (!authService.isAuthenticated()) {
+        console.log('User not authenticated, redirecting to login');
+        router.push('/auth/login');
+        return;
+      }
+
+      // Verify token validity
+      try {
+        const user = await authService.getCurrentUser();
+        if (!user) {
+          console.log('Invalid token in home page, logging out');
+          authService.logout();
+        }
+      } catch (error) {
+        console.error('Error verifying token in home page:', error);
+        authService.logout();
+      }
+    };
+
+    checkAuth();
+  }, [router]);
 
   useEffect(() => {
     const fetchDashboardData = async () => {

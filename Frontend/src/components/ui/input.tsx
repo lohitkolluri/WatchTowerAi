@@ -4,6 +4,14 @@ import { cn } from "@/lib/utils"
 
 const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
   ({ className, type, ...props }, ref) => {
+    // Add logging to debug input interactions
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      console.log("Input change:", e.target.value);
+      if (props.onChange) {
+        props.onChange(e);
+      }
+    };
+
     return (
       <input
         type={type}
@@ -12,7 +20,11 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
           className
         )}
         ref={ref}
+        onChange={handleChange}
         {...props}
+        // Ensure these props are explicitly applied
+        readOnly={props.readOnly}
+        disabled={props.disabled}
       />
     )
   }

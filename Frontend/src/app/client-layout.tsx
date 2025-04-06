@@ -1,37 +1,50 @@
 "use client";
 
 import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Toaster } from "@/components/ui/toaster";
+import authService from "@/services/authService";
 
 export function ClientRootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const router = useRouter();
+
   useEffect(() => {
-    // Set the API key and Auth token in localStorage for development if not already set
-    if (typeof window !== 'undefined') {
-      // Clear potentially stale auth values
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('NEXT_PUBLIC_API_KEY');
-      localStorage.removeItem('api_key');
+    // Check authentication status
+    const checkAuth = async () => {
+      const token = authService.getToken();
 
-      // Set the correct auth values
-      localStorage.setItem('auth_token', 'demo_token_test');
-      console.log('Auth token set in localStorage');
-
-      // Set API key - ensure it's set with BOTH potential key names for compatibility
-      const apiKey = 'test_api_key';
-      localStorage.setItem('NEXT_PUBLIC_API_KEY', apiKey);
-      localStorage.setItem('api_key', apiKey); // Also set with alternative name used in backend
-
-      console.log('Auth credentials configured for API requests', {
-        auth_token: localStorage.getItem('auth_token') ? '**present**' : '**missing**',
-        NEXT_PUBLIC_API_KEY: localStorage.getItem('NEXT_PUBLIC_API_KEY') ? '**present**' : '**missing**',
-        api_key: localStorage.getItem('api_key') ? '**present**' : '**missing**',
+      // Log authentication status for debugging
+      console.log('Authentication status check in client layout:', {
+        hasToken: !!token
       });
-    }
-  }, []);
+
+      // If no token is found, redirect to login
+      if (!token) {
+        console.log('No token found, redirecting to login');
+        router.push('/auth/login');
+        return;
+      }
+
+      // Verify token validity
+      try {
+        const user = await authService.getCurrentUser();
+        if (!user) {
+          console.log('Invalid token, logging out');
+          authService.logout();
+        } else {
+          console.log('User authenticated in client layout:', user.email);
+        }
+      } catch (error) {
+        console.error('Error verifying token:', error);
+      }
+    };
+
+    checkAuth();
+  }, [router]);
 
   return (
     <>

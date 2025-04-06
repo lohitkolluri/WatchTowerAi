@@ -28,7 +28,6 @@ export function SidebarNav({ className, items, collapsed = false, ...props }: Si
       {!collapsed && (
         <div className="mb-4 px-2">
           <h2 className="text-xs font-semibold tracking-tight text-muted-foreground/80 uppercase">
-            Navigation
           </h2>
         </div>
       )}

@@ -14,6 +14,21 @@ interface DatabaseConfig {
   name: string;
 }
 
+// Default configuration values
+const DEFAULT_SMTP_CONFIG: SMTPConfig = {
+  host: "",
+  port: "",
+  username: "",
+  password: "",
+  from_email: "",
+  use_tls: true
+};
+
+const DEFAULT_DB_CONFIG: DatabaseConfig = {
+  url: "",
+  name: ""
+};
+
 export const settingsService = {
   // Load environment variables if present
   loadEnvSettings: () => {
@@ -40,24 +55,49 @@ export const settingsService = {
     try {
       // Try to get settings from API first
       const apiSettings = await api.settings.getSMTP();
-      return apiSettings;
+
+      // Ensure we have valid values, even if the API returns unexpected format
+      return {
+        host: apiSettings?.host || DEFAULT_SMTP_CONFIG.host,
+        port: apiSettings?.port || DEFAULT_SMTP_CONFIG.port,
+        username: apiSettings?.username || DEFAULT_SMTP_CONFIG.username,
+        password: apiSettings?.password || DEFAULT_SMTP_CONFIG.password,
+        from_email: apiSettings?.from_email || DEFAULT_SMTP_CONFIG.from_email,
+        use_tls: typeof apiSettings?.use_tls === 'boolean' ? apiSettings.use_tls : DEFAULT_SMTP_CONFIG.use_tls
+      };
     } catch (error) {
       console.error("Failed to fetch SMTP settings from API:", error);
       // Fall back to environment variables
       const envSettings = settingsService.loadEnvSettings();
-      return envSettings.smtp;
+      return {
+        ...DEFAULT_SMTP_CONFIG,
+        ...envSettings.smtp
+      };
     }
   },
 
   updateSMTPConfig: async (config: SMTPConfig): Promise<void> => {
+    try {
     await api.settings.updateSMTP(config);
+    } catch (error) {
+      console.error("Failed to update SMTP settings:", error);
+      throw error;
+    }
   },
 
   // Database settings
   getDatabaseConfig: async (): Promise<DatabaseConfig> => {
+    try {
     // For now, just return environment variables
     const envSettings = settingsService.loadEnvSettings();
-    return envSettings.database;
+      return {
+        ...DEFAULT_DB_CONFIG,
+        ...envSettings.database
+      };
+    } catch (error) {
+      console.error("Failed to fetch database settings:", error);
+      return DEFAULT_DB_CONFIG;
+    }
   },
 
   updateDatabaseConfig: async (config: DatabaseConfig): Promise<void> => {

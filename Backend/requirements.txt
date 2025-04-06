@@ -20,3 +20,5 @@ email-validator==2.1.0.post1
 gunicorn==21.2.0
 markdown==3.5.2
 aiosmtplib==3.0.1
+passlib==1.7.4
+PyJWT==2.8.0

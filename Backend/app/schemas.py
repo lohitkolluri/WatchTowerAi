@@ -1,9 +1,10 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field, GetCoreSchemaHandler
+from pydantic import BaseModel, Field, GetCoreSchemaHandler, EmailStr
 from pydantic_core import core_schema
 from bson import ObjectId
 from .models import PyObjectId
+import uuid
 
 class LogEntryCreate(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
@@ -77,3 +78,24 @@ class MetricRead(BaseModel):
         "json_encoders": {ObjectId: str},
         "arbitrary_types_allowed": True
     }
+
+# Authentication schemas
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str
+    name: str
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+class UserResponse(BaseModel):
+    id: str
+    email: EmailStr
+    name: str
+    created_at: datetime
+    is_verified: bool
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"

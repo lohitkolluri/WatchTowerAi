@@ -96,3 +96,22 @@ class Metric(BaseModel):
         "json_encoders": {ObjectId: str},
         "arbitrary_types_allowed": True
     }
+
+class User(BaseModel):
+    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
+    email: str
+    password: str  # Will be hashed
+    name: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    is_active: bool = True
+    is_verified: bool = False
+    verification_token: Optional[str] = None
+    reset_password_token: Optional[str] = None
+    reset_password_expires: Optional[datetime] = None
+
+    model_config = {
+        "populate_by_name": True,
+        "json_encoders": {ObjectId: str},
+        "arbitrary_types_allowed": True
+    }

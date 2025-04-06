@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Query, status, Body, Request, Depends, Security
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,15 +8,17 @@ from fastapi.security import APIKeyHeader, OAuth2PasswordBearer, OAuth2PasswordR
 from pymongo import ASCENDING, DESCENDING
 from pymongo.errors import ConnectionFailure
 from .database import MongoDB, connect_to_mongo, close_mongo_connection, perform_db_operation
-from .models import LogEntry, Alert, Metric
-from .schemas import LogEntryCreate, LogEntryRead, AlertRead, AlertUpdate, MetricRead
+from .models import LogEntry, Alert, Metric, User
+from .schemas import LogEntryCreate, LogEntryRead, AlertRead, AlertUpdate, MetricRead, UserCreate, UserLogin, UserResponse, TokenResponse
 from .services.log_processor import process_log
 from .services.gemini import check_gemini_api_availability
+from .services.auth import authenticate_user, create_user, create_access_token, get_user_by_email
 from .config import settings
 from contextlib import asynccontextmanager
 import asyncio
 from bson import ObjectId
 import json
+import jwt
 
 # Replace standard logging with Loguru
 from loguru import logger
@@ -262,6 +264,10 @@ app = FastAPI(
             "name": "system",
             "description": "System health and maintenance operations",
         },
+        {
+            "name": "auth",
+            "description": "Authentication operations",
+        },
     ],
     contact={
         "name": "Lohit Kolluri",
@@ -381,6 +387,10 @@ tags_metadata = [
     {
         "name": "system",
         "description": "System health and maintenance operations",
+    },
+    {
+        "name": "auth",
+        "description": "Authentication operations",
     },
 ]
 
@@ -2474,3 +2484,110 @@ async def log_requests(request: Request, call_next):
         f"<-- {request.method} {request.url.path} End - Status: {response.status_code} Duration: {process_time:.4f}s"
     )
     return response
+
+# Add new authentication routes
+@app.post(
+    "/auth/register",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["auth"],
+    summary="Register a new user",
+    description="Create a new user account with email, password, and name."
+)
+async def register(user_data: UserCreate):
+    # Create a new user
+    user = await create_user(
+        email=user_data.email,
+        password=user_data.password,
+        name=user_data.name
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User with this email already exists"
+        )
+
+    # Return the user information without the password
+    return {
+        "id": str(user["_id"]),
+        "email": user["email"],
+        "name": user["name"],
+        "created_at": user["created_at"],
+        "is_verified": user["is_verified"]
+    }
+
+@app.post(
+    "/auth/login",
+    response_model=TokenResponse,
+    tags=["auth"],
+    summary="User login",
+    description="Authenticate a user and return an access token."
+)
+async def login(user_data: UserLogin):
+    # Authenticate the user
+    user = await authenticate_user(user_data.email, user_data.password)
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Create access token
+    access_token_expires = timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user["email"]},
+        expires_delta=access_token_expires
+    )
+
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.get(
+    "/auth/me",
+    response_model=UserResponse,
+    tags=["auth"],
+    summary="Get current user",
+    description="Get the current authenticated user's information."
+)
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    try:
+        # Decode the JWT token
+        payload = jwt.decode(
+            token,
+            settings.JWT_SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM]
+        )
+        email = payload.get("sub")
+
+        if email is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    except jwt.PyJWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Get the user from the database
+    user = await get_user_by_email(email)
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Return the user information
+    return {
+        "id": str(user["_id"]),
+        "email": user["email"],
+        "name": user["name"],
+        "created_at": user["created_at"],
+        "is_verified": user["is_verified"]
+    }
