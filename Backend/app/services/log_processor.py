@@ -155,6 +155,25 @@ async def process_log(log) -> None:
                     result = await MongoDB.alerts.insert_one(alert_dict)
                     if result.inserted_id:
                         logger.info(f"Alert created for {log_dict['service_name']} in {log_dict['environment']} with ID: {result.inserted_id}")
+                        # Send email alert
+                        try:
+                            subject = f"🚨 Alert: {log_dict['level']} in {log_dict['service_name']} ({log_dict['environment']})"
+                            context = {
+                                "service_name": log_dict["service_name"],
+                                "environment": log_dict["environment"],
+                                "level": log_dict["level"],
+                                "message": log_dict["message"],
+                                "remediation": remediation,
+                                "timestamp": str(datetime.now())
+                            }
+                            await send_email_alert(
+                                subject=subject,
+                                template_name="alert_email.html",
+                                context=context
+                            )
+                            logger.info("✅ Email alert sent successfully")
+                        except Exception as e:
+                            logger.error(f"Failed to send email alert: {e}")
                         return True
                     return False
 

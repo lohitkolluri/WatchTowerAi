@@ -12,56 +12,120 @@
       color: #333;
       margin: 0;
       padding: 0;
+      background-color: #f5f5f5;
     }
 
     .container {
       max-width: 600px;
-      margin: 0 auto;
-      padding: 20px;
+      margin: 20px auto;
+      padding: 0;
+      background-color: #ffffff;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      overflow: hidden;
     }
 
     .header {
-      background-color: #f8f9fa;
-      padding: 20px;
-      border-bottom: 3px solid #e74c3c;
+      background-color: #e74c3c;
+      padding: 25px;
       text-align: center;
-      margin-bottom: 20px;
+      color: white;
     }
 
     .header h1 {
       margin: 0;
-      color: #e74c3c;
+      font-size: 24px;
+      font-weight: 600;
+    }
+
+    .severity-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: 600;
+      margin-top: 10px;
+      text-transform: uppercase;
+    }
+
+    .severity-error {
+      background-color: #e74c3c;
+      color: white;
+    }
+
+    .severity-warning {
+      background-color: #f39c12;
+      color: white;
+    }
+
+    .severity-info {
+      background-color: #3498db;
+      color: white;
     }
 
     .content {
-      padding: 20px;
-      background-color: #ffffff;
-      border: 1px solid #e9ecef;
-      border-radius: 5px;
+      padding: 25px;
     }
 
     .alert-info {
       background-color: #f8f9fa;
-      padding: 15px;
-      border-left: 4px solid #e74c3c;
-      margin-bottom: 20px;
+      padding: 20px;
+      border-radius: 6px;
+      margin-bottom: 25px;
+      border: 1px solid #e9ecef;
     }
 
     .alert-detail {
-      margin-bottom: 10px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
     }
 
     .label {
-      font-weight: bold;
+      font-weight: 600;
       min-width: 120px;
-      display: inline-block;
+      color: #6c757d;
+    }
+
+    .value {
+      color: #2c3e50;
+      font-weight: 500;
+    }
+
+    .message-section {
+      margin-bottom: 25px;
+    }
+
+    .message-section h3 {
+      color: #2c3e50;
+      margin-bottom: 15px;
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .message-content {
+      background-color: #f8f9fa;
+      padding: 15px;
+      border-radius: 6px;
+      border-left: 4px solid #e74c3c;
     }
 
     .remediation {
-      margin-top: 30px;
-      padding: 15px;
       background-color: #e8f4f8;
+      padding: 20px;
+      border-radius: 6px;
       border-left: 4px solid #3498db;
+    }
+
+    .remediation h3 {
+      color: #2c3e50;
+      margin-bottom: 15px;
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .markdown-content {
+      color: #2c3e50;
     }
 
     .markdown-content strong,
@@ -101,14 +165,9 @@
       text-align: justify;
     }
 
-    .message-content {
-      text-align: justify;
-    }
-
     .footer {
-      margin-top: 20px;
       background-color: #f8f9fa;
-      padding: 15px;
+      padding: 20px;
       text-align: center;
       font-size: 12px;
       color: #6c757d;
@@ -117,7 +176,42 @@
 
     .footer p {
       margin: 5px 0;
-      text-align: center;
+    }
+
+    .footer a {
+      color: #3498db;
+      text-decoration: none;
+    }
+
+    .footer a:hover {
+      text-decoration: underline;
+    }
+
+    .timestamp {
+      font-size: 12px;
+      color: #6c757d;
+      text-align: right;
+      margin-top: 10px;
+    }
+
+    @media (max-width: 600px) {
+      .container {
+        margin: 0;
+        border-radius: 0;
+      }
+
+      .content {
+        padding: 15px;
+      }
+
+      .alert-detail {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .label {
+        margin-bottom: 5px;
+      }
     }
   </style>
 </head>
@@ -126,40 +220,50 @@
   <div class="container">
     <div class="header">
       <h1>🚨 WatchTowerAI Alert</h1>
+      <div class="severity-badge severity-{{ level.lower() }}">
+        {{ level }}
+      </div>
     </div>
 
     <div class="content">
       <div class="alert-info">
         <div class="alert-detail">
-          <span class="label">Service:</span> {{ service_name }}
+          <span class="label">Service:</span>
+          <span class="value">{{ service_name }}</span>
         </div>
         <div class="alert-detail">
-          <span class="label">Environment:</span> {{ environment }}
+          <span class="label">Environment:</span>
+          <span class="value">{{ environment }}</span>
         </div>
         <div class="alert-detail">
-          <span class="label">Level:</span> {{ level }}
-        </div>
-        <div class="alert-detail">
-          <span class="label">Timestamp:</span> {{ timestamp }}
+          <span class="label">Timestamp:</span>
+          <span class="value">{{ timestamp }}</span>
         </div>
       </div>
 
-      <h3>Message:</h3>
-      <div class="message-content">
-        <p>{{ message }}</p>
+      <div class="message-section">
+        <h3>Alert Details</h3>
+        <div class="message-content">
+          <p>{{ message }}</p>
+        </div>
       </div>
 
       <div class="remediation">
-        <h3>AI-Generated Remediation:</h3>
+        <h3>Recommended Actions</h3>
         <div class="markdown-content">
           {{ remediation | safe }}
         </div>
+      </div>
+
+      <div class="timestamp">
+        Alert ID: {{ alert_id }}
       </div>
     </div>
 
     <div class="footer">
       <p>This is an automated alert from WatchTowerAI.</p>
-      <p>© {{ timestamp.split(' ')[0].split('-')[0] }} WatchTowerAI</p>
+      <p>To manage your alert preferences, visit the WatchTowerAI dashboard.</p>
+      <p>© {{ timestamp.split(' ')[0].split('-')[0] }} WatchTowerAI. All rights reserved.</p>
     </div>
   </div>
 </body>
