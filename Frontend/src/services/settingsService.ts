@@ -1,13 +1,5 @@
 import { api } from "@/lib/api";
-
-interface SMTPConfig {
-  host: string;
-  port: string;
-  username: string;
-  password: string;
-  from_email: string;
-  use_tls: boolean;
-}
+import { SMTPConfig, SMTPConfigResponse } from "@/types/smtp";
 
 interface DatabaseConfig {
   url: string;
@@ -17,7 +9,7 @@ interface DatabaseConfig {
 // Default configuration values
 const DEFAULT_SMTP_CONFIG: SMTPConfig = {
   host: "",
-  port: "",
+  port: 587,
   username: "",
   password: "",
   from_email: "",
@@ -29,13 +21,25 @@ const DEFAULT_DB_CONFIG: DatabaseConfig = {
   name: ""
 };
 
+// Helper function to convert backend SMTP config to frontend format
+function convertSMTPConfig(backendConfig: SMTPConfigResponse): SMTPConfig {
+  return {
+    host: backendConfig.SMTP_SERVER,
+    port: backendConfig.SMTP_PORT,
+    username: backendConfig.SMTP_USERNAME,
+    password: backendConfig.SMTP_PASSWORD,
+    from_email: backendConfig.EMAIL_FROM,
+    use_tls: true // Default to true for security
+  };
+}
+
 export const settingsService = {
   // Load environment variables if present
   loadEnvSettings: () => {
     const settings = {
       smtp: {
         host: process.env.NEXT_PUBLIC_SMTP_HOST || "",
-        port: process.env.NEXT_PUBLIC_SMTP_PORT || "",
+        port: parseInt(process.env.NEXT_PUBLIC_SMTP_PORT || "587"),
         username: process.env.NEXT_PUBLIC_SMTP_USERNAME || "",
         password: process.env.NEXT_PUBLIC_SMTP_PASSWORD || "",
         from_email: process.env.NEXT_PUBLIC_SMTP_FROM_EMAIL || "",
@@ -50,37 +54,30 @@ export const settingsService = {
     return settings;
   },
 
-  // SMTP settings
-  getSMTPConfig: async (): Promise<SMTPConfig> => {
+  // Get SMTP configuration from the backend
+  getSMTP: async (): Promise<SMTPConfig> => {
     try {
-      // Try to get settings from API first
-      const apiSettings = await api.settings.getSMTP();
-
-      // Ensure we have valid values, even if the API returns unexpected format
-      return {
-        host: apiSettings?.host || DEFAULT_SMTP_CONFIG.host,
-        port: apiSettings?.port || DEFAULT_SMTP_CONFIG.port,
-        username: apiSettings?.username || DEFAULT_SMTP_CONFIG.username,
-        password: apiSettings?.password || DEFAULT_SMTP_CONFIG.password,
-        from_email: apiSettings?.from_email || DEFAULT_SMTP_CONFIG.from_email,
-        use_tls: typeof apiSettings?.use_tls === 'boolean' ? apiSettings.use_tls : DEFAULT_SMTP_CONFIG.use_tls
-      };
+      const response = await api.settings.getSMTP();
+      return convertSMTPConfig(response);
     } catch (error) {
-      console.error("Failed to fetch SMTP settings from API:", error);
-      // Fall back to environment variables
-      const envSettings = settingsService.loadEnvSettings();
-      return {
-        ...DEFAULT_SMTP_CONFIG,
-        ...envSettings.smtp
-      };
+      console.error("Failed to load SMTP configuration:", error);
+      return DEFAULT_SMTP_CONFIG;
     }
   },
 
-  updateSMTPConfig: async (config: SMTPConfig): Promise<void> => {
+  // Update SMTP configuration
+  updateSMTP: async (config: SMTPConfig): Promise<void> => {
     try {
-    await api.settings.updateSMTP(config);
+      await api.settings.updateSMTP({
+        SMTP_SERVER: config.host,
+        SMTP_PORT: config.port,
+        SMTP_USERNAME: config.username,
+        SMTP_PASSWORD: config.password,
+        EMAIL_FROM: config.from_email,
+        ALERT_RECIPIENT: config.from_email // Using from_email as recipient for now
+      });
     } catch (error) {
-      console.error("Failed to update SMTP settings:", error);
+      console.error("Failed to update SMTP configuration:", error);
       throw error;
     }
   },

@@ -12,6 +12,7 @@ import {
   ServiceMetrics,
   Log
 } from '@/types/common';
+import { SMTPConfig, SMTPConfigResponse } from '@/types/smtp';
 
 // API service for WatchTowerAI
 
@@ -756,7 +757,7 @@ export const api = {
 
   // Settings endpoints
   settings: {
-    getSMTP: async () => {
+    getSMTP: async (): Promise<SMTPConfigResponse> => {
       validateApiUrl();
       try {
         const response = await fetch(`${API_BASE_URL}/settings/smtp`, {
@@ -764,22 +765,22 @@ export const api = {
           method: 'GET',
           headers: getAuthHeaders(true)
         });
-        return handleResponse(response);
+        return handleResponse<SMTPConfigResponse>(response);
       } catch (error) {
         console.error('Error fetching SMTP settings:', error);
         // Return default values if API fails
         return {
-          host: "",
-          port: "",
-          username: "",
-          password: "",
-          from_email: "",
-          use_tls: true
+          SMTP_SERVER: "",
+          SMTP_PORT: 587,
+          SMTP_USERNAME: "",
+          SMTP_PASSWORD: "",
+          EMAIL_FROM: "",
+          ALERT_RECIPIENT: ""
         };
       }
     },
 
-    updateSMTP: async (config: any) => {
+    updateSMTP: async (config: SMTPConfigResponse): Promise<void> => {
       validateApiUrl();
       const response = await fetch(`${API_BASE_URL}/settings/smtp`, {
         ...defaultFetchOptions,
@@ -787,7 +788,7 @@ export const api = {
         headers: getAuthHeaders(true),
         body: JSON.stringify(config)
       });
-      return handleResponse(response, 'void');
+      return handleResponse<void>(response, 'void');
     }
   },
 

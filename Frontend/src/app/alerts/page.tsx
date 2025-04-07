@@ -2,7 +2,7 @@
 
 import React from "react";
 import MainLayout from "@/components/layouts/main-layout";
-import { Search, Filter, Bell, AlertCircle, Clock, X, CheckCircle, AlertTriangle, Info, ArrowUpDown, RefreshCw, Settings, ChevronLeftIcon, ChevronRightIcon, Slash, Loader2, Eye, EyeOff } from "lucide-react";
+import { Search, Filter, Bell, AlertCircle, Clock, X, CheckCircle, AlertTriangle, Info, RefreshCw, Settings, ChevronLeftIcon, ChevronRightIcon, Slash, Loader2, Eye, EyeOff } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useEffect, useState, useCallback } from "react";
@@ -45,15 +45,8 @@ import { Badge } from "@/components/ui/badge";
 import { normalizeEnvironment, getEnvironmentLabel, useEnvironments } from "@/lib/environments";
 import { Skeleton } from "@/components/ui/skeleton";
 import { debounce } from "lodash";
-
-interface SMTPConfig {
-  host: string;
-  port: number;
-  username: string;
-  password: string;
-  from_email: string;
-  use_tls: boolean;
-}
+import { SMTPConfig } from "@/types/smtp";
+import { settingsService } from "@/services/settingsService";
 
 interface Alert {
   _id: string;
@@ -89,12 +82,12 @@ interface AlertFilters {
   status: string;
 }
 
-const SEVERITY_ICONS: {
-  [key: string]: {
-    icon: React.ForwardRefExoticComponent<any>;
-    color: string;
-  }
-} = {
+interface SeverityIcon {
+  icon: React.ForwardRefExoticComponent<React.ComponentProps<'svg'> & { ref?: React.Ref<SVGSVGElement> }>;
+  color: string;
+}
+
+const SEVERITY_ICONS: Record<string, SeverityIcon> = {
   critical: { icon: AlertCircle, color: "text-purple-600" },
   error: { icon: AlertCircle, color: "text-red-500" },
   warning: { icon: AlertTriangle, color: "text-amber-500" },
@@ -113,7 +106,22 @@ const STATUS_BADGES: {
   default: { label: "Unknown", color: "bg-muted text-muted-foreground" }
 };
 
-export default function AlertsPage() {
+interface AlertResponse {
+  data: Alert[];
+}
+
+interface AlertsPageProps {
+  // Add any props if needed
+}
+
+interface PaginationState {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
+export default function AlertsPage(_props: AlertsPageProps) {
   const { allEnvironments } = useEnvironments();
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [selectedAlert, setSelectedAlert] = useState<FormattedAlert | null>(null);
@@ -132,7 +140,7 @@ export default function AlertsPage() {
   const [isAutoRefresh, setIsAutoRefresh] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [services, setServices] = useState<string[]>([]);
-  const [environments, setEnvironments] = useState<string[]>([]);
+  const [environmentsList, setEnvironmentsList] = useState<string[]>([]);
   const [filters, setFilters] = useState<AlertFilters>({
     search: "",
     service: "all",
@@ -140,7 +148,7 @@ export default function AlertsPage() {
     severity: "all",
     status: "all",
   });
-  const [pagination, setPagination] = useState({
+  const [pagination, setPagination] = useState<PaginationState>({
     page: 1,
     limit: 20,
     total: 0,
@@ -153,7 +161,7 @@ export default function AlertsPage() {
       id: alert._id,
       title: alert.message,
       service: alert.service_name,
-      environment: normalizeEnvironment(alert.environment),
+      environment: alert.environment,
       severity: alert.level,
       status: alert.status || (alert.acknowledged ? 'acknowledged' : 'active'),
       timestamp: new Date(alert.timestamp),
@@ -163,7 +171,7 @@ export default function AlertsPage() {
     }));
   }, []);
 
-  const applyFilters = useCallback((alerts: FormattedAlert[], currentFilters: AlertFilters) => {
+  const applyFilters = useCallback((alerts: FormattedAlert[], currentFilters: AlertFilters): FormattedAlert[] => {
     return alerts.filter(alert => {
       if (currentFilters.search) {
         const searchLower = currentFilters.search.toLowerCase();
@@ -200,35 +208,36 @@ export default function AlertsPage() {
     });
   }, []);
 
-  useEffect(() => {
-    const filtered = applyFilters(allAlerts, filters);
+  const getPaginatedAlerts = useCallback((): FormattedAlert[] => {
+    const start = (pagination.page - 1) * pagination.limit;
+    const end = start + pagination.limit;
+    return filteredAlerts.slice(start, end);
+  }, [filteredAlerts, pagination.page, pagination.limit]);
 
-    // Sort alerts purely by timestamp (newest first)
-    const sortedAlerts = filtered.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  const handlePreviousPage = useCallback(() => {
+    if (pagination.page > 1) {
+      setPagination(prev => ({ ...prev, page: prev.page - 1 }));
+    }
+  }, [pagination.page]);
 
-    setFilteredAlerts(sortedAlerts);
-
-    setPagination(prev => ({
-      ...prev,
-      total: sortedAlerts.length,
-      totalPages: Math.ceil(sortedAlerts.length / prev.limit),
-      page: 1
-    }));
-  }, [filters, allAlerts, applyFilters]);
+  const handleNextPage = useCallback(() => {
+    if (pagination.page < pagination.totalPages) {
+      setPagination(prev => ({ ...prev, page: prev.page + 1 }));
+    }
+  }, [pagination.page, pagination.totalPages]);
 
   const fetchAlerts = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const alertsData = await api.alerts.getAll();
+      const response = await api.alerts.getAll();
+      const alertsData = response as AlertResponse;
 
       if (!alertsData || !Array.isArray(alertsData.data)) {
         throw new Error('Invalid response format');
       }
 
       const formattedAlerts = formatAlerts(alertsData.data);
-
-      // Sort alerts purely by timestamp (newest first)
       const sortedAlerts = formattedAlerts.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
 
       setAllAlerts(sortedAlerts);
@@ -237,7 +246,7 @@ export default function AlertsPage() {
       const uniqueEnvironments = Array.from(new Set(formattedAlerts.map(alert => alert.environment))).filter(Boolean);
 
       setServices(uniqueServices.sort());
-      setEnvironments(uniqueEnvironments.sort());
+      setEnvironmentsList(uniqueEnvironments.sort());
 
     } catch (error) {
       console.error('Error fetching alerts:', error);
@@ -252,45 +261,6 @@ export default function AlertsPage() {
     e.preventDefault();
     void fetchAlerts();
   }, [fetchAlerts]);
-
-  const handleFilterChange = (key: keyof AlertFilters, value: string) => {
-    setFilters(prev => ({ ...prev, [key]: value }));
-  };
-
-  const handleFilterClear = useCallback((e: React.MouseEvent<HTMLButtonElement>, key: keyof AlertFilters) => {
-    e.preventDefault();
-    handleFilterChange(key, 'all');
-  }, []);
-
-  const debouncedSearch = useCallback(
-    debounce((value: string) => {
-      setFilters(prev => ({ ...prev, search: value }));
-    }, 300),
-    []
-  );
-
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const searchTerm = e.target.value;
-    debouncedSearch(searchTerm);
-  };
-
-  const clearSearch = () => {
-    const searchInput = document.querySelector('input[placeholder="Search alerts..."]') as HTMLInputElement;
-    if (searchInput) searchInput.value = '';
-    setFilters(prev => ({ ...prev, search: '' }));
-  };
-
-  const handlePreviousPage = useCallback(() => {
-    if (pagination.page > 1) {
-      setPagination(prev => ({ ...prev, page: prev.page - 1 }));
-    }
-  }, [pagination.page]);
-
-  const handleNextPage = useCallback(() => {
-    if (pagination.page < pagination.totalPages) {
-      setPagination(prev => ({ ...prev, page: prev.page + 1 }));
-    }
-  }, [pagination.page, pagination.totalPages]);
 
   useEffect(() => {
     void fetchAlerts();
@@ -308,27 +278,26 @@ export default function AlertsPage() {
     };
   }, [isAutoRefresh, fetchAlerts]);
 
-  useEffect(() => {
-    async function loadSMTPConfig() {
-      try {
-        const config = await api.settings.getSMTP();
+  const loadSMTPConfig = useCallback(async () => {
+    try {
+      const config = await settingsService.getSMTP();
+      if (config) {
         setSmtpConfig(config);
-      } catch (error) {
-        console.error("Failed to load SMTP configuration:", error);
       }
+    } catch (error) {
+      console.error("Failed to load SMTP configuration:", error);
     }
-    loadSMTPConfig();
   }, []);
+
+  useEffect(() => {
+    void loadSMTPConfig();
+  }, [loadSMTPConfig]);
 
   const handleSMTPSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
     try {
-      const configToSubmit = {
-        ...smtpConfig,
-        port: parseInt(smtpConfig.port.toString(), 10),
-      };
-      await api.settings.updateSMTP(configToSubmit);
+      await settingsService.updateSMTP(smtpConfig);
       toast.success("SMTP configuration updated successfully");
       setIsConfigOpen(false);
     } catch (error) {
@@ -339,48 +308,39 @@ export default function AlertsPage() {
     }
   };
 
-  const getSeverityIcon = (severity: string) => {
+  const getSeverityIcon = useCallback((severity: string) => {
     if (!severity) return null;
     const config = SEVERITY_ICONS[severity.toLowerCase() as keyof typeof SEVERITY_ICONS];
     if (!config) return null;
 
     const Icon = config.icon;
     return <Icon className={`h-4 w-4 ${config.color}`} />;
-  };
-
-  const startItem = filteredAlerts.length === 0 ? 0 : (pagination.page - 1) * pagination.limit + 1;
-  const endItem = Math.min(pagination.page * pagination.limit, filteredAlerts.length);
-
-  const getPaginatedAlerts = useCallback(() => {
-    const start = (pagination.page - 1) * pagination.limit;
-    const end = start + pagination.limit;
-    return filteredAlerts.slice(start, end);
-  }, [filteredAlerts, pagination.page, pagination.limit]);
+  }, []);
 
   const displayedAlerts = getPaginatedAlerts();
+  const startItem = filteredAlerts.length === 0 ? 0 : (pagination.page - 1) * pagination.limit + 1;
+  const endItem = Math.min(pagination.page * pagination.limit, filteredAlerts.length);
 
   const handleAcknowledge = async (alertId: string) => {
     try {
       await api.alerts.acknowledge(alertId);
 
-      // Update both allAlerts and filteredAlerts states
       setAllAlerts(prevAlerts => prevAlerts.map(alert => {
         if (alert.id === alertId) {
           return {
             ...alert,
             acknowledged: true,
-            status: 'acknowledged'  // Use the status from the backend
+            status: 'acknowledged'
           };
         }
         return alert;
       }));
 
-      // Update the selected alert if it's the one being acknowledged
       if (selectedAlert?.id === alertId) {
         setSelectedAlert(prev => prev ? {
           ...prev,
           acknowledged: true,
-          status: 'acknowledged'  // Use the status from the backend
+          status: 'acknowledged'
         } : null);
       }
 
@@ -391,6 +351,46 @@ export default function AlertsPage() {
       toast.error("Failed to acknowledge alert");
     }
   };
+
+  const handleFilterChange = useCallback((key: keyof AlertFilters, value: string) => {
+    setFilters(prev => ({ ...prev, [key]: value }));
+  }, []);
+
+  const handleFilterClear = useCallback((e: React.MouseEvent<HTMLButtonElement>, key: keyof AlertFilters) => {
+    e.preventDefault();
+    handleFilterChange(key, 'all');
+  }, [handleFilterChange]);
+
+  const debouncedSearch = useCallback(
+    debounce((value: string) => {
+      setFilters(prev => ({ ...prev, search: value }));
+    }, 300),
+    [setFilters]
+  );
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const searchTerm = e.target.value;
+    debouncedSearch(searchTerm);
+  };
+
+  const clearSearch = () => {
+    const searchInput = document.querySelector('input[placeholder="Search alerts..."]') as HTMLInputElement;
+    if (searchInput) searchInput.value = '';
+    setFilters(prev => ({ ...prev, search: '' }));
+  };
+
+  useEffect(() => {
+    const filtered = applyFilters(allAlerts, filters);
+    const sortedAlerts = filtered.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+
+    setFilteredAlerts(sortedAlerts);
+    setPagination(prev => ({
+      ...prev,
+      total: sortedAlerts.length,
+      totalPages: Math.ceil(sortedAlerts.length / prev.limit),
+      page: 1
+    }));
+  }, [filters, allAlerts, applyFilters]);
 
   return (
     <MainLayout>
@@ -501,9 +501,9 @@ export default function AlertsPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Environments</SelectItem>
-                    {environments.map((env) => (
+                    {environmentsList.map((env) => (
                       <SelectItem key={env} value={env}>
-                        {getEnvironmentLabel(env)}
+                        {env}
                       </SelectItem>
                     ))}
                   </SelectContent>

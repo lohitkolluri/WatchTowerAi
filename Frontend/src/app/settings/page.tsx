@@ -10,15 +10,18 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { settingsService } from "@/services/settingsService";
 import { Mail, AlertTriangle } from "lucide-react";
+import { SMTPConfig } from "@/types/smtp";
 
 // Interfaces
-interface SMTPConfig {
-  host: string;
-  port: string;
-  username: string;
-  password: string;
-  from_email: string;
-  use_tls: boolean;
+interface EnvSettings {
+  smtp: {
+    host: string;
+    port: number;
+    username: string;
+    password: string;
+    from_email: string;
+    use_tls: boolean;
+  };
 }
 
 export default function SettingsPage() {
@@ -33,10 +36,10 @@ export default function SettingsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [envSettings, setEnvSettings] = useState({
+  const [envSettings, setEnvSettings] = useState<EnvSettings>({
     smtp: {
       host: "",
-      port: "",
+      port: 587,
       username: "",
       password: "",
       from_email: "",
@@ -44,36 +47,41 @@ export default function SettingsPage() {
     }
   });
 
+  const [smtpSettings, setSmtpSettings] = useState<SMTPConfig>({
+    host: "",
+    port: 587,
+    username: "",
+    password: "",
+    from_email: "",
+    use_tls: true
+  });
+  const [dbSettings, setDbSettings] = useState<any | null>(null);
+
   // Load settings on component mount
   useEffect(() => {
-    const loadSettings = async () => {
-      setIsLoading(true);
-      setError(null);
-
-      // Load environment variables
-      const envVars = settingsService.loadEnvSettings();
-      setEnvSettings(envVars);
-
+    async function loadSettings() {
       try {
-        // Load system settings
-        const smtpSettings = await settingsService.getSMTPConfig();
+        // Load environment variables
+        const envVars = settingsService.loadEnvSettings();
+        setEnvSettings({
+          smtp: envVars.smtp
+        });
 
-        // Set individual form fields
-        setHost(smtpSettings?.host || "");
-        setPort(smtpSettings?.port || "");
-        setUsername(smtpSettings?.username || "");
-        setPassword(smtpSettings?.password || "");
-        setFromEmail(smtpSettings?.from_email || "");
-        setUseTls(smtpSettings?.use_tls !== undefined ? smtpSettings.use_tls : true);
-      } catch (err) {
-        console.error("Error loading settings:", err);
-        setError("Failed to load settings");
-        toast.error("Failed to load settings");
-      } finally {
+        // Load system settings
+        const smtpConfig = await settingsService.getSMTP();
+        setSmtpSettings(smtpConfig);
+
+        // Load database settings
+        const dbSettings = await settingsService.getDatabaseConfig();
+        setDbSettings(dbSettings);
+
+        setIsLoading(false);
+      } catch (error) {
+        console.error("Failed to load settings:", error);
+        setError("Failed to load settings. Please try again.");
         setIsLoading(false);
       }
-    };
-
+    }
     loadSettings();
   }, []);
 
@@ -81,23 +89,12 @@ export default function SettingsPage() {
   const handleSMTPSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
-
-    // Collect all form field values into a config object
-    const smtpConfig = {
-      host,
-      port,
-      username,
-      password,
-      from_email: fromEmail,
-      use_tls: useTls
-    };
-
     try {
-      await settingsService.updateSMTPConfig(smtpConfig);
+      await settingsService.updateSMTP(smtpSettings);
       toast.success("SMTP settings updated successfully");
     } catch (error) {
+      console.error("Failed to update SMTP settings:", error);
       toast.error("Failed to update SMTP settings");
-      console.error(error);
     } finally {
       setIsSaving(false);
     }
