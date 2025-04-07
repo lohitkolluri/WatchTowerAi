@@ -22,3 +22,4 @@ markdown==3.5.2
 aiosmtplib==3.0.1
 passlib==1.7.4
 PyJWT==2.8.0
+python-jose==3.3.0
