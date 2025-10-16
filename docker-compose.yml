@@ -1,0 +1,142 @@
+version: '3.9'
+
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:7.0
+    container_name: watchtower-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: watchtower
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    networks:
+      - watchtower-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Redis Cache & Rate Limiting
+  redis:
+    image: redis:7-alpine
+    container_name: watchtower-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - watchtower-network
+    command: redis-server --appendonly yes --requirepass redis_password_change_me
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ./Backend
+      dockerfile: Dockerfile
+    container_name: watchtower-backend
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      MONGODB_URI: mongodb://mongodb:27017
+      MONGODB_DB_NAME: watchtower
+      REDIS_URL: redis://:redis_password_change_me@redis:6379/0
+      API_KEY: ${API_KEY:-change_me_in_production}
+      AUTH_TOKEN: ${AUTH_TOKEN:-change_me_in_production}
+      SECRET_KEY: ${SECRET_KEY:-change_me_in_production}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      SMTP_SERVER: ${SMTP_SERVER:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-noreply@watchtowerai.com}
+      ALERT_RECIPIENT: ${ALERT_RECIPIENT:-admin@watchtowerai.com}
+      CORS_ORIGINS: http://localhost:3000,http://frontend:3000,https://yourdomain.com
+      LOG_LEVEL: INFO
+      RATE_LIMIT_ENABLED: "true"
+      RATE_LIMIT_REQUESTS: "100"
+      RATE_LIMIT_PERIOD: "60"
+    ports:
+      - "8000:8000"
+    networks:
+      - watchtower-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+        labels: "service=backend"
+
+  # Next.js Frontend
+  frontend:
+    build:
+      context: ./Frontend
+      dockerfile: Dockerfile.prod
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    container_name: watchtower-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      NEXT_PUBLIC_API_KEY: ${NEXT_PUBLIC_API_KEY:-change_me_in_production}
+      NEXT_PUBLIC_AUTH_TOKEN: ${NEXT_PUBLIC_AUTH_TOKEN:-change_me_in_production}
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+    networks:
+      - watchtower-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "service=frontend"
+
+networks:
+  watchtower-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+  mongodb_config:
+  redis_data:

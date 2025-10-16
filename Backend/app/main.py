@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Query, status, Body, Request, Depends, Security
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Query, status, Body, Request, Depends, Security, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -353,11 +353,13 @@ async def add_custom_ui(request: Request, call_next):
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
-    allow_methods=settings.CORS_ALLOW_METHODS,
-    allow_headers=settings.CORS_ALLOW_HEADERS,
-    expose_headers=settings.CORS_EXPOSE_HEADERS
+    allow_origins=[],
+    allow_origin_regex=".*",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=600
 )
 
 # Define API tags for better documentation organization
@@ -930,6 +932,97 @@ async def get_metrics(api_key: str = Security(api_key_header)):
 )
 async def health_check():
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+
+@app.get(
+    "/services",
+    tags=["system"],
+    summary="List services",
+    description="Return services aggregated from endpoints, logs and metrics with simple counts."
+)
+async def list_services():
+    async def aggregate_services():
+        services = {}
+
+        # From registered API endpoints
+        try:
+            cursor = MongoDB.api_endpoints.aggregate([
+                {"$group": {"_id": {"service": {"$ifNull": ["$service", "unknown"]}}, "count": {"$sum": 1}, "last_checked": {"$max": "$last_checked"}}}
+            ])
+            async for row in cursor:
+                name = row["_id"]["service"]
+                services.setdefault(name, {"name": name, "endpoints": 0, "logs": 0, "metrics": 0, "last_seen": None})
+                services[name]["endpoints"] = row.get("count", 0)
+                services[name]["last_seen"] = row.get("last_checked") or services[name]["last_seen"]
+        except Exception as e:
+            logger.warning(f"Service aggregation (endpoints) failed: {e}")
+
+        # From logs
+        try:
+            cursor = MongoDB.log_entries.aggregate([
+                {"$group": {"_id": {"service_name": "$service_name"}, "count": {"$sum": 1}, "last_ts": {"$max": "$timestamp"}}}
+            ])
+            async for row in cursor:
+                name = row["_id"].get("service_name") or "unknown"
+                services.setdefault(name, {"name": name, "endpoints": 0, "logs": 0, "metrics": 0, "last_seen": None})
+                services[name]["logs"] = row.get("count", 0)
+                last_ts = row.get("last_ts")
+                if last_ts and (services[name]["last_seen"] is None or last_ts > services[name]["last_seen"]):
+                    services[name]["last_seen"] = last_ts
+        except Exception as e:
+            logger.warning(f"Service aggregation (logs) failed: {e}")
+
+        # From metrics
+        try:
+            cursor = MongoDB.metrics.aggregate([
+                {"$group": {"_id": {"service_name": "$service_name"}, "count": {"$sum": 1}, "last_updated": {"$max": "$updated_at"}}}
+            ])
+            async for row in cursor:
+                name = row["_id"].get("service_name") or "unknown"
+                services.setdefault(name, {"name": name, "endpoints": 0, "logs": 0, "metrics": 0, "last_seen": None})
+                services[name]["metrics"] = row.get("count", 0)
+                last_upd = row.get("last_updated")
+                if last_upd and (services[name]["last_seen"] is None or last_upd > services[name]["last_seen"]):
+                    services[name]["last_seen"] = last_upd
+        except Exception as e:
+            logger.warning(f"Service aggregation (metrics) failed: {e}")
+
+        # Finalize list
+        result = list(services.values())
+        # Sort by last_seen desc then name
+        result.sort(key=lambda x: (x["last_seen"] is not None, x["last_seen"]), reverse=True)
+        return result
+
+    try:
+        aggregated = await perform_db_operation(aggregate_services)
+        # Serialize datetimes to isoformat
+        for s in aggregated:
+            if s.get("last_seen") and isinstance(s["last_seen"], datetime):
+                s["last_seen"] = s["last_seen"].isoformat()
+        return aggregated
+    except Exception as e:
+        logger.error(f"Error listing services: {e}")
+        raise HTTPException(status_code=500, detail="Error listing services")
+
+@app.get(
+    "/settings/smtp",
+    tags=["system"],
+    summary="Get SMTP configuration (safe)",
+    description="Expose safe SMTP settings without secrets so the UI can display configuration state."
+)
+async def get_smtp_settings():
+    try:
+        return {
+            "enabled": settings.ENABLE_EMAIL_ALERTS,
+            "server": settings.SMTP_SERVER or None,
+            "port": settings.SMTP_PORT,
+            "username_set": bool(settings.SMTP_USERNAME),
+            "from": settings.EMAIL_FROM or None,
+            "default_recipient": settings.ALERT_RECIPIENT or None,
+            "use_tls": settings.SMTP_USE_TLS,
+        }
+    except Exception as e:
+        logger.error(f"Error reading SMTP settings: {e}")
+        raise HTTPException(status_code=500, detail="Error reading SMTP settings")
 
 @app.get("/documentation", response_class=HTMLResponse, include_in_schema=False)
 async def custom_documentation():
@@ -2360,6 +2453,12 @@ async def catch_all(
     """
     logger.info(f"Captured request to undefined path: {path}")
 
+    # Guard: Avoid ingesting the application's own requests unless explicitly requested.
+    # Only capture if a service_name is provided to attribute the request to an external service.
+    if not service_name:
+        # 204 No Content MUST NOT include a response body to avoid content-length mismatches
+        return Response(status_code=204)
+
     # Determine method and construct URL
     method = request.method
     url = str(request.url)
@@ -2368,8 +2467,8 @@ async def catch_all(
     headers = dict(request.headers)
     query_params = dict(request.query_params)
 
-    # Get extracted service name from query or use the path as a fallback
-    extracted_service = service_name or path.split('/')[0] or "unknown_service"
+    # Get extracted service name from query (required to capture)
+    extracted_service = service_name
 
     # Get the request body for methods that might have one
     body = None

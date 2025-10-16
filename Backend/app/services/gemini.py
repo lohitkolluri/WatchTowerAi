@@ -7,6 +7,7 @@ import socket
 import asyncio
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from enum import Enum
 
 # Replace standard logging with Loguru
 from loguru import logger
@@ -20,18 +21,18 @@ try:
 except Exception as e:
     logger.error(f"Failed to configure Gemini API: {e}")
 
-# Setup the generation configuration.
+# Setup the generation configuration with optimized parameters for production
 generation_config = {
-    "temperature": 0.5,  # Reduced temperature for more consistent responses
-    "top_p": 0.8,
-    "top_k": 40,
-    "max_output_tokens": 1024,  # Reduced for remediation suggestions
+    "temperature": 0.3,  # Lower for more consistent, deterministic responses
+    "top_p": 0.7,       # More focused output
+    "top_k": 30,        # Reduced for consistency
+    "max_output_tokens": 512,  # Optimized for concise remediation
 }
 
 # Create the generative model.
 model = None
 API_KEY = settings.GEMINI_API_KEY
-MODEL_NAME = "gemini-1.5-pro"  # Updated to use the same model as the working curl command
+MODEL_NAME = "gemini-2.5-flash-lite"
 
 try:
     model = genai.GenerativeModel(
@@ -41,15 +42,65 @@ try:
 except Exception as e:
     logger.warning(f"Failed to initialize Gemini model: {e}")
 
-# Pre-defined remediation suggestions for common log issues
+# Enhanced remediation suggestions with categorized responses
 FALLBACK_REMEDIATIONS = {
-    "database": "Check database connectivity, credentials, and query syntax. Ensure database server is running with sufficient resources.",
-    "connection": "Verify network connectivity, check for firewall rules blocking the connection, and confirm service endpoints are operational.",
-    "authentication": "Review authentication credentials and permissions. Check if tokens are expired or revoked.",
-    "timeout": "Increase timeout settings, optimize the operation that's timing out, or check for resource constraints.",
-    "memory": "Increase available memory, look for memory leaks, or optimize memory usage in the application.",
-    "error": "Check application logs for detailed stack traces. Review recent changes that might have introduced this error."
+    "database": {
+        "connection": "Verify database connectivity: Check host/port, credentials, firewall rules. Restart database service if needed.",
+        "query": "Review SQL/query syntax. Check indexes and execution plans. Optimize slow queries with EXPLAIN.",
+        "transaction": "Check for deadlocks and transaction isolation levels. Review transaction logs and consider isolation level changes.",
+        "timeout": "Increase timeout settings. Optimize queries and check for database load. Consider connection pooling.",
+        "general": "Check database connectivity, credentials, and query syntax. Ensure database server is running with sufficient resources."
+    },
+    "auth": {
+        "login": "Verify credentials and authentication service availability. Check for account lockouts or expired credentials.",
+        "token": "Check token expiration. Regenerate if expired. Verify token signing and validation configuration.",
+        "permission": "Review user roles and permissions. Verify RBAC configuration. Check for permission delegation issues.",
+        "general": "Review authentication credentials and permissions. Check if tokens are expired or revoked."
+    },
+    "performance": {
+        "latency": "Analyze response times. Check for N+1 queries, inefficient algorithms, or resource contention.",
+        "memory": "Monitor memory usage. Look for memory leaks, inefficient data structures, or garbage collection issues.",
+        "cpu": "Profile CPU usage. Identify hot spots. Optimize algorithms or consider horizontal scaling.",
+        "throughput": "Check system load. Optimize serialization, caching, and database queries. Consider load balancing.",
+        "general": "Increase available memory, look for memory leaks, or optimize memory usage in the application."
+    },
+    "request": {
+        "client_error": "Review request format and parameters. Check API documentation. Verify required fields are present.",
+        "server_error": "Check server logs for stack traces. Review recent deployments. Check resource availability.",
+        "timeout": "Increase timeout settings, optimize slow operations, or check for resource constraints.",
+        "general": "Check application logs for detailed stack traces. Review recent changes."
+    },
+    "security": {
+        "injection": "Implement input validation and parameterized queries. Use ORM with prepared statements.",
+        "access": "Review authentication and authorization logic. Check for privilege escalation vulnerabilities.",
+        "attack": "Implement rate limiting, WAF rules, and DDoS protection. Review security logs.",
+        "general": "Implement security best practices: input validation, HTTPS, secure headers, and regular security audits."
+    },
+    "infrastructure": {
+        "server": "Check server health, logs, and resource availability. Restart service if needed.",
+        "network": "Verify network connectivity and routing. Check firewall rules and DNS resolution.",
+        "deployment": "Verify deployment status, rollback if necessary. Check for configuration issues.",
+        "general": "Check system resources, service availability, and infrastructure dependencies."
+    }
 }
+
+# Few-shot examples for better AI classification
+FEW_SHOT_EXAMPLES = """
+Example 1:
+Log: "Connection refused on db-prod-01.example.com:5432"
+Analysis: Type=database, Subtype=connection, Severity=high
+Remediation: Verify PostgreSQL is running on db-prod-01.example.com:5432. Check firewall rules. Verify credentials.
+
+Example 2:
+Log: "Invalid JWT token: signature verification failed"
+Analysis: Type=auth, Subtype=token_issue, Severity=high
+Remediation: Check token expiration and signing keys. Regenerate token if needed. Verify issuer configuration.
+
+Example 3:
+Log: "Response time exceeded threshold: 5000ms (threshold: 1000ms)"
+Analysis: Type=performance, Subtype=high_latency, Severity=medium
+Remediation: Profile slow endpoints. Check database query performance. Consider caching or optimization.
+"""
 
 async def check_gemini_api_availability():
     """
@@ -108,6 +159,12 @@ async def call_gemini_api(log: LogEntryCreate) -> str:
     """
     Use the google-generativeai package to generate a remediation suggestion.
     Falls back to pattern-based suggestions if API is unavailable.
+    
+    Uses advanced prompt engineering with:
+    - Structured output format
+    - Few-shot examples
+    - Chain-of-thought reasoning
+    - Context-aware templates
 
     Args:
         log: The log entry to analyze
@@ -125,29 +182,49 @@ async def call_gemini_api(log: LogEntryCreate) -> str:
         log_subtype = getattr(log, "log_subtype", None) or "unknown"
         entities = getattr(log, "entities", {}) or {}
 
-        # Create enhanced prompt using log classification data
+        # Create enhanced prompt using structured prompt engineering
+        # 1. System context and role
         prompt = (
-            f"You are a senior system administrator analyzing a log entry. "
-            f"Provide concise, focused remediation suggestion, no more than 100 words. The priority is mentioning key issues and their remedies without too much of explanation.\n\n"
-            f"Log details:\n"
+            "You are an expert DevOps engineer and system administrator with deep expertise in troubleshooting production issues.\n"
+            "Your goal is to provide concise, actionable remediation steps that a senior engineer can execute immediately.\n\n"
+            
+            # 2. Few-shot examples for better understanding
+            "REFERENCE EXAMPLES:\n"
+            f"{FEW_SHOT_EXAMPLES}\n\n"
+            
+            # 3. Task definition with output format
+            "TASK: Analyze the log entry and provide immediate remediation steps.\n"
+            "OUTPUT: Provide 2-3 specific, actionable steps. Keep response under 100 words.\n\n"
+            
+            # 4. Log context
+            "LOG ENTRY:\n"
             f"- Service: {log.service_name}\n"
             f"- Environment: {log.environment}\n"
             f"- Level: {log.level}\n"
             f"- Message: {log.message}\n"
-            f"- Log Type: {log_type}\n"
-            f"- Log Subtype: {log_subtype}\n"
+            f"- Classification: {log_type} / {log_subtype}\n"
         )
 
         # Add entities if available
         if entities and isinstance(entities, dict) and len(entities) > 0:
-            prompt += "- Entities:\n"
+            prompt += "- Key Entities:\n"
             for entity_type, values in entities.items():
-                if isinstance(values, list):
-                    prompt += f"  - {entity_type}: {', '.join(values)}\n"
-                else:
-                    prompt += f"  - {entity_type}: {values}\n"
+                if isinstance(values, list) and values:
+                    prompt += f"  • {entity_type}: {', '.join(str(v) for v in values[:3])}\n"
+                elif values:
+                    prompt += f"  • {entity_type}: {values}\n"
 
-        # Use model if available (legacy approach)
+        # Add decision tree guidance
+        prompt += (
+            "\n\nDECISION TREE:\n"
+            "1. Is this a connectivity issue? → Check network/service availability\n"
+            "2. Is this a performance issue? → Profile and optimize\n"
+            "3. Is this a security issue? → Review and implement controls\n"
+            "4. Is this a code issue? → Debug and fix\n\n"
+            "REMEDIATION:"
+        )
+
+        # Try using the model first
         if model:
             try:
                 # Properly await the response using asyncio
@@ -156,11 +233,13 @@ async def call_gemini_api(log: LogEntryCreate) -> str:
 
                 # Check for valid response
                 if hasattr(response, "text") and response.text.strip():
-                    return response.text.strip()
+                    remediation = response.text.strip()
+                    logger.debug(f"AI remediation generated: {remediation[:100]}...")
+                    return remediation
                 else:
                     logger.warning("Empty response from model.generate_content")
             except Exception as e:
-                logger.error(f"Error using model.generate_content: {e}")
+                logger.debug(f"Model approach failed, using direct API: {e}")
 
         # Fall back to direct API call if model approach fails
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -182,7 +261,9 @@ async def call_gemini_api(log: LogEntryCreate) -> str:
                 data = response.json()
                 if "candidates" in data and len(data["candidates"]) > 0:
                     text = data["candidates"][0]["content"]["parts"][0]["text"]
-                    return text.strip()
+                    remediation = text.strip()
+                    logger.debug(f"AI remediation generated via API: {remediation[:100]}...")
+                    return remediation
 
         # If we get here, both approaches failed
         logger.warning("Both model and direct API call failed. Using fallback remediation.")
@@ -195,6 +276,7 @@ async def call_gemini_api(log: LogEntryCreate) -> str:
 def get_fallback_remediation(log: LogEntryCreate) -> str:
     """
     Generate a remediation suggestion based on log content when API is unavailable.
+    Uses intelligent pattern matching and categorized suggestions.
 
     Args:
         log: The log entry to analyze
@@ -212,43 +294,51 @@ def get_fallback_remediation(log: LogEntryCreate) -> str:
 
     # If we have classification data, use it for more targeted fallback
     if log_type and log_type != "unknown":
-        if log_type in FALLBACK_REMEDIATIONS:
-            base_remediation = FALLBACK_REMEDIATIONS[log_type]
-
-            # Add subtype-specific advice if available
-            if log_subtype and log_subtype != "unknown" and log_subtype != "general":
-                if log_subtype in FALLBACK_REMEDIATIONS:
-                    return f"{base_remediation} {FALLBACK_REMEDIATIONS[log_subtype]}"
-                elif "connection" in log_subtype:
-                    return f"{base_remediation} {FALLBACK_REMEDIATIONS['connection']}"
-                elif "timeout" in log_subtype:
-                    return f"{base_remediation} {FALLBACK_REMEDIATIONS['timeout']}"
-
-            return base_remediation
+        type_remediations = FALLBACK_REMEDIATIONS.get(log_type, {})
+        
+        # Try to use subtype-specific remediation
+        if isinstance(type_remediations, dict) and log_subtype:
+            subtype_key = log_subtype.lower().replace(" ", "_")
+            if subtype_key in type_remediations:
+                return type_remediations[subtype_key]
+        
+        # Fall back to general remediation for this type
+        if isinstance(type_remediations, dict) and "general" in type_remediations:
+            return type_remediations["general"]
+        elif isinstance(type_remediations, str):
+            return type_remediations
 
     # Look for common patterns in the message
-    if "database" in message or "db" in message or "sql" in message or "query" in message:
+    if any(db_term in message for db_term in ["database", "db", "sql", "query", "mongo", "postgres", "mysql"]):
         if "timeout" in message or "connection" in message:
-            return FALLBACK_REMEDIATIONS["database"] + " Check for database connection timeouts or high load."
+            return FALLBACK_REMEDIATIONS["database"]["timeout"]
         if "syntax" in message:
-            return "Review SQL query syntax. Check for malformed queries or incorrect table references."
-        return FALLBACK_REMEDIATIONS["database"]
+            return "Review SQL/query syntax. Check indexes. Use EXPLAIN to analyze execution plans."
+        return FALLBACK_REMEDIATIONS["database"]["general"]
 
-    if "timeout" in message or "timed out" in message:
-        return FALLBACK_REMEDIATIONS["timeout"]
+    if any(term in message for term in ["timeout", "timed out", "deadline exceeded"]):
+        return FALLBACK_REMEDIATIONS["performance"]["timeout"]
 
-    if "memory" in message or "out of memory" in message:
-        return FALLBACK_REMEDIATIONS["memory"]
+    if any(term in message for term in ["memory", "out of memory", "oom"]):
+        return FALLBACK_REMEDIATIONS["performance"]["memory"]
 
-    if "auth" in message or "login" in message or "password" in message or "credential" in message:
-        return FALLBACK_REMEDIATIONS["authentication"]
+    if any(term in message for term in ["auth", "login", "password", "credential", "token", "jwt", "unauthorized"]):
+        if "token" in message:
+            return FALLBACK_REMEDIATIONS["auth"]["token"]
+        return FALLBACK_REMEDIATIONS["auth"]["login"]
+
+    if any(term in message for term in ["cpu", "high load", "load average"]):
+        return FALLBACK_REMEDIATIONS["performance"]["cpu"]
+
+    if any(term in message for term in ["injection", "xss", "csrf", "security", "attack"]):
+        return FALLBACK_REMEDIATIONS["security"]["general"]
 
     # Default fallback based on log level
     if level in ["CRITICAL", "FATAL"]:
-        return "This is a critical issue that requires immediate attention. Check system resource availability, recent deployments, and service dependencies."
+        return "CRITICAL ISSUE - Requires immediate investigation. Check: 1) System resource availability 2) Recent deployments 3) Service dependencies. Consider escalation if persists."
 
     if level == "ERROR":
-        return "Investigate the root cause by checking system logs, recent code changes, and dependencies. Consider rolling back recent changes if the error persists."
+        return "ERROR detected - Investigate: 1) Root cause via system logs 2) Recent code changes 3) Service dependencies. Consider rollback if error persists."
 
-    # Generic fallback
-    return "Check system logs for more details. Verify service connectivity, available resources, and recent code deployments."
+    # Generic fallback for INFO/DEBUG/WARN
+    return "Monitor situation - Check: 1) Detailed logs for context 2) Service metrics 3) Resource availability. Escalate if issue persists."

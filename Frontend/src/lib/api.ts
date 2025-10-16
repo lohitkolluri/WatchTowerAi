@@ -29,6 +29,50 @@ if (!API_BASE_URL) {
   console.error('API_BASE_URL is not configured. Please check your environment variables.');
 }
 
+// Global fetch wrapper to always inject auth headers for API_BASE_URL requests
+// This avoids missing X-API-Key across scattered call sites
+(() => {
+  const shouldWrap = typeof globalThis !== 'undefined' && typeof globalThis.fetch === 'function';
+  if (!shouldWrap) return;
+
+  const originalFetch: typeof fetch = globalThis.fetch.bind(globalThis);
+
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    try {
+      const urlString = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
+
+      // Only inject for our backend API calls
+      if (urlString && API_BASE_URL && urlString.startsWith(API_BASE_URL)) {
+        // Determine if this call requires Authorization by looking for an opt-in flag
+        // We use a non-standard hint on the init object: (init as any).__requireAuth
+        const requireAuth = Boolean((init as any)?.__requireAuth);
+
+        // Build headers by merging existing ones with our auth headers
+        const existingHeaders = new Headers((init && init.headers) || (typeof input !== 'string' && !(input instanceof URL) ? (input as Request).headers : undefined));
+        const authHeaders = getAuthHeaders(requireAuth);
+
+        Object.entries(authHeaders).forEach(([k, v]) => {
+          // Do not overwrite if header already explicitly provided
+          if (!existingHeaders.has(k)) existingHeaders.set(k, v);
+        });
+
+        const nextInit: RequestInit = {
+          ...init,
+          headers: existingHeaders,
+          // Ensure CORS defaults are in place unless explicitly overridden
+          mode: init?.mode ?? 'cors',
+          credentials: init?.credentials ?? 'include',
+        };
+
+        return originalFetch(input, nextInit);
+      }
+    } catch (e) {
+      // Fall through to original fetch on any unexpected condition
+    }
+    return originalFetch(input, init as any);
+  };
+})();
+
 // Error class for API errors
 export class ApiRequestError extends Error {
   constructor(
@@ -132,15 +176,29 @@ const getAuthHeaders = (requireAuth: boolean = false) => {
   };
 
   // Add API key - standardized to use NEXT_PUBLIC_API_KEY
-  let apiKey;
+  let apiKey: string | null | undefined;
 
   if (typeof window !== 'undefined') {
-    apiKey = window.localStorage.getItem('NEXT_PUBLIC_API_KEY');
+    // Prefer explicitly set key, but fall back to a more generic key if present
+    apiKey = window.localStorage.getItem('NEXT_PUBLIC_API_KEY') || window.localStorage.getItem('api_key');
   }
 
   // Fallback to environment variable or default from .env
   if (!apiKey) {
-    apiKey = process.env.NEXT_PUBLIC_API_KEY || 'test_api_key';
+    apiKey = process.env.NEXT_PUBLIC_API_KEY;
+  }
+
+  // Sanitize and validate API key
+  const sanitizedApiKey = (apiKey ?? '').trim().replace(/^['"]|['"]$/g, '');
+  if (!sanitizedApiKey) {
+    console.error('Missing NEXT_PUBLIC_API_KEY. Set it in .env.local or localStorage and restart the dev server.');
+  }
+
+  // If running in the browser and localStorage lacks the key, seed it from env for consistency
+  if (typeof window !== 'undefined' && sanitizedApiKey && !window.localStorage.getItem('NEXT_PUBLIC_API_KEY')) {
+    try {
+      window.localStorage.setItem('NEXT_PUBLIC_API_KEY', sanitizedApiKey);
+    } catch {}
   }
 
   // Debug logging for API key
@@ -150,11 +208,13 @@ const getAuthHeaders = (requireAuth: boolean = false) => {
     usingDefault: apiKey === 'test_api_key'
   });
 
-  headers['X-API-Key'] = apiKey;
+  if (sanitizedApiKey) {
+    headers['X-API-Key'] = sanitizedApiKey;
+  }
 
   // Add OAuth token if authentication is required
   if (requireAuth) {
-    let token;
+    let token: string | null | undefined;
 
     if (typeof window !== 'undefined') {
       token = window.localStorage.getItem('auth_token');
@@ -163,6 +223,13 @@ const getAuthHeaders = (requireAuth: boolean = false) => {
     // Fallback to default if not in localStorage
     if (!token) {
       token = process.env.NEXT_PUBLIC_AUTH_TOKEN || 'demo_token_test';
+    }
+
+    // Seed localStorage with token if missing (browser only)
+    if (typeof window !== 'undefined' && token && !window.localStorage.getItem('auth_token')) {
+      try {
+        window.localStorage.setItem('auth_token', token);
+      } catch {}
     }
 
     // Debug logging for auth token

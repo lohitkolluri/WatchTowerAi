@@ -12,7 +12,7 @@ from loguru import logger
 
 # Constants for Gemini API
 API_KEY = settings.GEMINI_API_KEY
-MODEL_NAME = "gemini-2.0-flash"  # Using the same model as in gemini.py
+MODEL_NAME = "gemini-2.5-flash-lite"  # Using the same model as in gemini.py
 
 # Remove standard logger
 # logger = logging.getLogger(__name__)
@@ -186,6 +186,12 @@ async def classify_log(log_entry: dict) -> Tuple[str, str, float, Dict[str, List
 async def classify_with_gemini(text: str) -> Tuple[str, str, Dict[str, List[str]]]:
     """
     Use Gemini AI to classify log entries when pattern-based approach has low confidence.
+    
+    Uses structured prompt engineering:
+    - JSON schema requirements
+    - Classification taxonomy
+    - Examples for reference
+    - Strict output format
 
     Args:
         text: The log text to classify
@@ -196,14 +202,59 @@ async def classify_with_gemini(text: str) -> Tuple[str, str, Dict[str, List[str]
         - log_subtype: More specific subtype
         - entities: Extracted entities
     """
-    # Create prompt for Gemini
+    # Define the classification taxonomy
+    valid_types = ['database', 'auth', 'request', 'performance', 'security', 'infrastructure', 'application', 'unknown']
+    
+    # Create structured prompt for Gemini with better engineering
     prompt = (
-        "You are a log analysis expert. Analyze this log entry and provide:\n"
-        "1. Primary log type (one of: database, auth, request, performance, security, infrastructure, application, unknown)\n"
-        "2. Subtype (e.g., connection_error, login_failure, timeout)\n"
-        "3. Any key entities (IPs, user IDs, error codes, URLs)\n\n"
-        "Format your response as JSON with these exact keys: log_type, log_subtype, entities\n"
-        f"Log Entry: {text}"
+        "You are a senior log analysis expert with expertise in production systems monitoring.\n"
+        "Your task is to classify log entries with high accuracy.\n\n"
+        
+        "CLASSIFICATION TAXONOMY:\n"
+        "1. database: Connection errors, query failures, transaction issues, deadlocks\n"
+        "2. auth: Authentication failures, authorization issues, token problems, permission denials\n"
+        "3. request: HTTP errors, API failures, client/server errors, bad requests\n"
+        "4. performance: Slow responses, high latency, memory issues, CPU spikes\n"
+        "5. security: Security breaches, injection attacks, unauthorized access, suspicious behavior\n"
+        "6. infrastructure: Server failures, network issues, deployment problems, resource constraints\n"
+        "7. application: Application logic errors, business logic failures, custom exceptions\n"
+        "8. unknown: Cannot classify into above categories\n\n"
+        
+        "SUBTYPES EXAMPLES:\n"
+        "- database: connection_error, query_error, transaction_failure, deadlock, timeout\n"
+        "- auth: login_failure, token_expired, permission_denied, invalid_credentials\n"
+        "- request: client_error (4xx), server_error (5xx), timeout, bad_request\n"
+        "- performance: high_latency, memory_leak, cpu_spike, throughput_degradation\n"
+        "- security: injection_attack, unauthorized_access, malicious_activity, breach\n"
+        "- infrastructure: server_down, network_failure, deployment_issue, resource_exhaustion\n\n"
+        
+        "ENTITIES TO EXTRACT:\n"
+        "- ip_address: IPv4 or IPv6 addresses\n"
+        "- email: Email addresses\n"
+        "- url: URLs or URIs\n"
+        "- user_id: User identifiers\n"
+        "- error_code: Error codes or exception IDs\n"
+        "- timestamp: Timestamps or time references\n"
+        "- hostname: Server or host names\n\n"
+        
+        "INSTRUCTIONS:\n"
+        "1. Analyze the log message carefully\n"
+        "2. Return ONLY valid JSON (no markdown, no explanations)\n"
+        "3. log_type MUST be one of the 8 types above\n"
+        "4. log_subtype should be specific and descriptive\n"
+        "5. entities should be a dict with lists of values\n"
+        "6. If confidence is low, use 'unknown' for log_type\n\n"
+        
+        "RESPONSE FORMAT (valid JSON only):\n"
+        "{\n"
+        '  "log_type": "one of the 8 types",\n'
+        '  "log_subtype": "specific subtype",\n'
+        '  "confidence": 0.0-1.0,\n'
+        '  "severity": "low|medium|high|critical",\n'
+        '  "entities": {"entity_type": ["value1", "value2"]}\n'
+        "}\n\n"
+        
+        f"LOG TO CLASSIFY:\n{text}"
     )
 
     async with httpx.AsyncClient(timeout=5.0) as client:
@@ -226,40 +277,42 @@ async def classify_with_gemini(text: str) -> Tuple[str, str, Dict[str, List[str]
                 data = response.json()
                 if "candidates" in data and len(data["candidates"]) > 0:
                     text_response = data["candidates"][0]["content"]["parts"][0]["text"]
-                    logger.debug(f"Raw Gemini response: {text_response}")
+                    logger.debug(f"Raw Gemini response: {text_response[:200]}...")
 
                     # Try to extract JSON from the response
                     try:
-                        # First try to find JSON block
-                        json_matches = re.findall(r'\{[^}]+\}', text_response)
+                        # First try direct JSON parse
+                        try:
+                            classification = json.loads(text_response)
+                            return _parse_classification_response(classification, valid_types)
+                        except json.JSONDecodeError:
+                            pass
+                        
+                        # Try to find JSON block in response
+                        json_matches = re.findall(r'\{[^}]*(?:\{[^}]*\}[^}]*)*\}', text_response, re.DOTALL)
                         if json_matches:
                             for json_str in json_matches:
                                 try:
                                     classification = json.loads(json_str)
-                                    if all(k in classification for k in ['log_type', 'log_subtype']):
-                                        log_type = classification.get("log_type", "unknown").lower()
-                                        log_subtype = classification.get("log_subtype", "general").lower()
-                                        entities = classification.get("entities", {})
-
-                                        # Validate log_type
-                                        valid_types = {'database', 'auth', 'request', 'performance', 'security', 'infrastructure', 'application', 'unknown'}
-                                        if log_type not in valid_types:
-                                            log_type = "unknown"
-
-                                        return log_type, log_subtype, entities
+                                    return _parse_classification_response(classification, valid_types)
                                 except json.JSONDecodeError:
                                     continue
 
-                        # If no valid JSON found, try to extract information from text
-                        log_type_match = re.search(r'(?i)log[_ ]type[:\s]+([a-zA-Z_]+)', text_response)
-                        subtype_match = re.search(r'(?i)(?:sub[_ ]?type|type)[:\s]+([a-zA-Z_]+)', text_response)
+                        # Fallback: try to extract key-value pairs
+                        log_type = "unknown"
+                        log_subtype = "unknown"
+                        
+                        log_type_match = re.search(r'(?i)"?log[_]?type"?\s*:\s*"?([a-zA-Z_]+)"?', text_response)
+                        if log_type_match:
+                            log_type = log_type_match.group(1).lower()
+                            if log_type not in valid_types:
+                                log_type = "unknown"
+                        
+                        subtype_match = re.search(r'(?i)"?(?:log_)?subtype"?\s*:\s*"?([a-zA-Z_]+)"?', text_response)
+                        if subtype_match:
+                            log_subtype = subtype_match.group(1).lower()
 
-                        log_type = log_type_match.group(1).lower() if log_type_match else "unknown"
-                        log_subtype = subtype_match.group(1).lower() if subtype_match else "general"
-
-                        # Extract any entities mentioned
                         entities = extract_entities(text_response)
-
                         return log_type, log_subtype, entities
 
                     except Exception as e:
@@ -269,10 +322,22 @@ async def classify_with_gemini(text: str) -> Tuple[str, str, Dict[str, List[str]
                     logger.warning("No candidates in Gemini response")
         except Exception as e:
             logger.error(f"Error calling Gemini API: {e}")
-            raise  # Propagate the error for better handling
+            raise
 
     # Only return unknown if we truly couldn't process the response
     return "unknown", "unknown", {}
+
+def _parse_classification_response(classification: dict, valid_types: List[str]) -> Tuple[str, str, Dict]:
+    """Parse and validate classification response from Gemini."""
+    log_type = classification.get("log_type", "unknown").lower()
+    log_subtype = classification.get("log_subtype", "general").lower()
+    entities = classification.get("entities", {})
+    
+    # Validate log_type
+    if log_type not in valid_types:
+        log_type = "unknown"
+    
+    return log_type, log_subtype, entities
 
 def classify_by_pattern(text: str, patterns: Dict[str, List[str]]) -> Tuple[str, float]:
     """

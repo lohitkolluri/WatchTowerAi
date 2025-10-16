@@ -100,14 +100,17 @@ export default function ServicesPage() {
       const extractedEnvironments: string[] = [];
 
       const fetchedServices: Service[] = responseData.map((service: any) => {
-        if (service.environment) {
-          extractedEnvironments.push(normalizeEnvironment(service.environment));
+        const env = normalizeEnvironment(service.environment || service.env || "unknown");
+        if (env) {
+          extractedEnvironments.push(env);
         }
+        const name = service.name || service.service_name || service.service || "unknown";
+        const stableId = service._id || service.id || `${name}-${env}`;
         return {
-          id: service._id || service.id,
-          name: service.name,
-          environment: normalizeEnvironment(service.environment),
-          alertRules: service.alertRules,
+          id: stableId,
+          name,
+          environment: env,
+          alertRules: service.alertRules || "default",
           notificationChannels: service.notificationChannels || [],
           status: service.status || "Active",
           endpoint: service.endpoint ? {

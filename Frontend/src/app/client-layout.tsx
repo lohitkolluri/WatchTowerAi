@@ -9,21 +9,23 @@ export function ClientRootLayout({
   children: React.ReactNode;
 }) {
   useEffect(() => {
-    // Set the API key and Auth token in localStorage for development if not already set
+    // Seed auth in localStorage for development only when missing; never overwrite existing values
     if (typeof window !== 'undefined') {
-      // Clear potentially stale auth values
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('NEXT_PUBLIC_API_KEY');
-      localStorage.removeItem('api_key');
+      // Auth token
+      if (!localStorage.getItem('auth_token')) {
+        const token = process.env.NEXT_PUBLIC_AUTH_TOKEN || 'watchtower_auth_token_2024_secure';
+        localStorage.setItem('auth_token', token);
+        console.log('Auth token set in localStorage');
+      }
 
-      // Set the correct auth values
-      localStorage.setItem('auth_token', 'demo_token_test');
-      console.log('Auth token set in localStorage');
-
-      // Set API key - ensure it's set with BOTH potential key names for compatibility
-      const apiKey = 'test_api_key';
-      localStorage.setItem('NEXT_PUBLIC_API_KEY', apiKey);
-      localStorage.setItem('api_key', apiKey); // Also set with alternative name used in backend
+      // API key – prefer env, do not overwrite if already present
+      const existingKey = localStorage.getItem('NEXT_PUBLIC_API_KEY') || localStorage.getItem('api_key');
+      if (!existingKey) {
+        const envKey = (process.env.NEXT_PUBLIC_API_KEY || '').trim();
+        const apiKey = envKey || 'watchtower_api_key_2024_secure';
+        localStorage.setItem('NEXT_PUBLIC_API_KEY', apiKey);
+        localStorage.setItem('api_key', apiKey);
+      }
 
       console.log('Auth credentials configured for API requests', {
         auth_token: localStorage.getItem('auth_token') ? '**present**' : '**missing**',
