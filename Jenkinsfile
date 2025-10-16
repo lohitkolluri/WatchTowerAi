@@ -1,77 +1,53 @@
 pipeline {
-  agent any
+    agent any
 
-  environment {
-    AWS_DEFAULT_REGION = credentials('aws-default-region')
-    AWS_ACCESS_KEY_ID = credentials('aws-access-key-id')
-    AWS_SECRET_ACCESS_KEY = credentials('aws-secret-access-key')
-    AWS_SESSION_TOKEN = credentials('aws-session-token')
-
-    SSH_PRIVATE_KEY = credentials('ec2-ssh-private-key')
-    EC2_SSH_USER = 'ubuntu'
-  }
-
-  options {
-    timestamps()
-    ansiColor('xterm')
-  }
-
-  stages {
-    stage('Checkout') {
-      steps {
-        checkout scm
-      }
+    environment {
+        MONGODB_URI = credentials('mongo-uri')
+        GEMINI_API_KEY = credentials('gemini-key')
+        SMTP_USERNAME = credentials('smtp-email')
+        SMTP_PASSWORD = credentials('smtp-pass')
     }
 
-    stage('Terraform Init & Plan') {
-      steps {
-        dir('infra/terraform') {
-          sh 'terraform init -input=false'
-          sh '''terraform plan -input=false \
-            -var aws_region=${AWS_DEFAULT_REGION} \
-            -var key_pair_name=watchtower-jenkins \
-            -var ssh_public_key="$TF_VAR_SSH_PUBLIC_KEY" \
-            -out tfplan'''
+    stages {
+
+        stage('Clone Repo') {
+            steps {
+                git branch: 'main', url: 'https://github.com/lohitkolluri/WatchTowerAi.git'
+            }
         }
-      }
-    }
 
-    stage('Terraform Apply') {
-      steps {
-        dir('infra/terraform') {
-          sh 'terraform apply -input=false -auto-approve tfplan'
+        stage('Build Frontend') {
+            steps {
+                dir('Frontend') {
+                    sh 'yarn install'
+                    sh 'yarn build'
+                }
+            }
         }
-      }
-    }
 
-    stage('Fetch EC2 IP') {
-      steps {
-        dir('infra/terraform') {
-          script {
-            env.EC2_PUBLIC_IP = sh(returnStdout: true, script: 'terraform output -raw ec2_public_ip').trim()
-          }
-          echo "EC2 IP: ${env.EC2_PUBLIC_IP}"
+        stage('Deploy to EC2') {
+            steps {
+                sshPublisher(publishers: [
+                    sshPublisherDesc(
+                        configName: 'EC2',
+                        transfers: [
+                            sshTransfer(
+                                sourceFiles: '**',
+                                remoteDirectory: '/home/ubuntu/watchtower',
+                                execCommand: '''
+                                cd /home/ubuntu/watchtower/Backend
+                                pm2 stop watchtower_backend || true
+                                pm2 start "uvicorn app.main:app --host 0.0.0.0 --port 8000" --name watchtower_backend
+
+                                cd /home/ubuntu/watchtower/Frontend
+                                pm2 stop watchtower_frontend || true
+                                pm2 start "yarn start" --name watchtower_frontend
+                                '''
+                            )
+                        ]
+                    )
+                ])
+            }
         }
-      }
     }
-
-    stage('Deploy via SSH + Docker Compose') {
-      steps {
-        script {
-          writeFile file: 'sshkey.pem', text: SSH_PRIVATE_KEY
-          sh 'chmod 600 sshkey.pem'
-        }
-        sh '''ssh -o StrictHostKeyChecking=no -i sshkey.pem ${EC2_SSH_USER}@${EC2_PUBLIC_IP} \
-          "cd /opt/WatchTowerAi && sudo docker compose pull && sudo docker compose up -d --build"'''
-      }
-    }
-  }
-
-  post {
-    always {
-      cleanWs()
-    }
-  }
 }
-
-
